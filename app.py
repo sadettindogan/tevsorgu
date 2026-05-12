@@ -5,27 +5,9 @@ import time
 import io
 import zipfile
 import pandas as pd
-import re
 
 # --- SAYFA AYARLARI ---
-st.set_page_config(page_title="TEV Odeme Sorgulama", page_icon="", layout="centered")
-
-# CSS ile tüm sayfayı %80 uzaklaştırıyoruz (Yazılar birbirine girmesin diye)
-st.markdown(
-    """
-    <style>
-        .main .block-container {
-            transform: scale(0.8);
-            transform-origin: top center;
-        }
-        /* Tablo hücre içindeki yazı fontunu küçültüyoruz */
-        [data-testid="stTable"] td, [data-testid="stTable"] th {
-            font-size: 10px !important;
-        }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
+st.set_page_config(page_title="TEV Odeme Sorgulama", layout="wide")
 
 st.title("TEV Ödeme Sorgulama Portali")
 
@@ -34,7 +16,7 @@ if "query_results" not in st.session_state: st.session_state.query_results = Non
 if "zip_bytes" not in st.session_state: st.session_state.zip_bytes = None
 if "merged_pdf_bytes" not in st.session_state: st.session_state.merged_pdf_bytes = None
 
-raw_data = st.text_area("Tescil Numaraları", height=150, placeholder="20230000...")
+raw_data = st.text_area("Tescil Numaraları", height=150, placeholder="Her satıra bir numara gelecek şekilde yazın...")
 
 col_btn1, col_btn2 = st.columns(2)
 with col_btn1:
@@ -61,17 +43,6 @@ def extract_tev_result(page):
     except:
         return "-", "-", "Hata", "-", None
 
-def wait_for_result(page, prev_t):
-    timeout, interval, elapsed = 10, 0.3, 0
-    while elapsed < timeout:
-        try:
-            body = page.inner_text("body")
-            if prev_t and prev_t in body:
-                time.sleep(interval); elapsed += interval; continue
-            if any(kw in body.lower() for kw in ["telafi edici vergi", "ödeme yoktur", "kayıt bulunamadı"]): return
-        except: pass
-        time.sleep(interval); elapsed += interval
-
 if start_query:
     tescil_list = [t.strip() for t in raw_data.split('\n') if t.strip()]
     if tescil_list:
@@ -84,22 +55,20 @@ if start_query:
                 browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
                 page = browser.new_page()
                 page.goto("https://uygulama.gtb.gov.tr/TEV/")
-                prev_t = None
-
+                
                 for i, tno in enumerate(tescil_list):
                     status_text.text(f"⏳ Sorgulanıyor: {tno} ({i+1}/{len(tescil_list)})")
                     page.fill("#TextBox_Beyanname", tno)
                     page.click("#Btn_Ara")
-                    wait_for_result(page, prev_t)
+                    time.sleep(1.5) # Bekleme süresini stabilite için sabit tuttuk
                     
                     res = extract_tev_result(page)
                     results.append({
-                        "Beyanname": tno,
-                        "Gönderen": res[0],
-                        "Vergi_No": res[1],
+                        "Beyanname No": tno,
+                        "Gonderen": res[0],
+                        "Vergi No": res[1],
                         "Tutar": res[2],
-                        "Tahsilat": res[3],
-                        "odeme_var": res[4]
+                        "Tahsilat": res[3]
                     })
 
                     if pdf_mode and res[2] not in ["Kayıt Bulunamadı", "Hata"]:
@@ -108,7 +77,6 @@ if start_query:
                         pdf_results[f"{tno}.pdf"] = pdf_c
                         pdf_list_for_merge.append(pdf_c)
                     
-                    prev_t = tno
                     progress_bar.progress((i + 1) / len(tescil_list))
                 browser.close()
 
@@ -137,23 +105,5 @@ if st.session_state.query_results:
 
     st.markdown("### 🔍 Sonuç Detay")
     df = pd.DataFrame(st.session_state.query_results)
-
-    # Renklendirme ve Font Ayarı
-    def style_table(row):
-        style = 'font-size: 10px; white-space: normal; word-wrap: break-word;'
-        tev = row["Tutar"]
-        if tev == "Kayıt Bulunamadı": bg = "background-color: #f8f9fa;"
-        elif tev == "Ödeme Yoktur": bg = "background-color: #f0fff4; color: #1a7f37; font-weight: bold;"
-        elif row["odeme_var"] is True and tev not in ["-", "Hata"]: bg = "background-color: #fff5f5; color: #d73a49; font-weight: bold;"
-        else: bg = ""
-        return [f"{style} {bg}"] * len(row)
-
-    styled_df = df.style.apply(style_table, axis=1)
-
-    # KeyError hatasını önlemek için column_config'i en basite indirdik
-    st.dataframe(
-        styled_df,
-        use_container_width=True,
-        hide_index=True,
-        column_order=("Beyanname", "Gönderen", "Vergi_No", "Tutar", "Tahsilat")
-    )
+    # En güvenli tablo gösterimi: Hiçbir konfigürasyon yapmıyoruz, hata payı sıfır.
+    st.dataframe(df, use_container_width=True, hide_index=True)
