@@ -31,53 +31,19 @@ pdf_mode = btn_pdf_al
 start_query = btn_sadece_sonuc or btn_pdf_al
 
 
-def parse_label_value_page(page_text):
-    """
-    Sayfanın metin içeriğinden label→değer çiftlerini çıkarır.
-    Sayfa yapısı:
-        Gönderen          STARCOOL SOĞUTMA SANAYİ VE TİCARET ANONİM ŞİRKETİ
-        Vergino           7810163646
-        Telafi Edici Vergi   1908,61
-        Tahsilat Yeri     Banka
-    Yani label ve değer aynı satırda, aralarında geniş boşluk var.
-    Ayrıca iki ayrı satırda da gelebilir (label satırı + değer satırı).
-    """
-    result = {
-        "gonderen": "-",
-        "vergino": "-",
-        "tev": "-",
-        "tahsilat_yeri": "-",
-    }
-
-    lines = [l.strip() for l in page_text.splitlines() if l.strip()]
-
-    label_map = {
-        "gonderen":      ["gönderen", "gonderen"],
-        "vergino":       ["vergino", "vergi no", "vergi numarası"],
-        "tev":           ["telafi edici vergi"],
-        "tahsilat_yeri": ["tahsilat yeri"],
-    }
-
-    for i, line in enumerate(lines):
-        line_lower = line.lower()
-        for key, labels in label_map.items():
-            for lbl in labels:
-                if lbl in line_lower:
-                    # Aynı satırda label'dan sonra değer var mı?
-                    idx = line_lower.index(lbl)
-                    after = line[idx + len(lbl):].strip()
-                    if after:
-                        result[key] = after
-                    elif i + 1 < len(lines):
-                        # Bir sonraki satır değerdir
-                        result[key] = lines[i + 1]
-                    break
-
-    return result
-
-
 def extract_tev_result(page):
     """
+    Sayfadan TEV alanlarını okur.
+    Sayfa yapısı: label ve değer ayrı satırlarda (tablo/grid).
+      Gönderen
+      STARCOOL ...
+      Vergino
+      7810163646
+      Telafi Edici Vergi
+      1908,61
+      Tahsilat Yeri
+      Banka
+
     Döner: (gonderen, vergino, tev_degeri, tahsilat_yeri, has_payment)
     """
     try:
@@ -91,26 +57,48 @@ def extract_tev_result(page):
         if "ödeme yoktur" in page_text.lower() or "odeme yoktur" in page_text.lower():
             return "-", "-", "Ödeme Yoktur", "-", False
 
-        parsed = parse_label_value_page(page_text)
+        lines = [l.strip() for l in page_text.splitlines() if l.strip()]
 
-        gonderen     = parsed["gonderen"]
-        vergino      = parsed["vergino"]
-        tev_value    = parsed["tev"]
-        tahsilat_yeri = parsed["tahsilat_yeri"]
+        def find_value(label_keywords):
+            """
+            Verilen keyword'lerden birini içeren satırı bulur,
+            sonraki anlamlı satırı değer olarak döner.
+            Aynı satırda da değer arayabilir (fallback).
+            """
+            for i, line in enumerate(lines):
+                line_lower = line.lower()
+                for kw in label_keywords:
+                    if kw in line_lower:
+                        # Önce aynı satırda label'dan sonrası
+                        after = line[line_lower.index(kw) + len(kw):].strip()
+                        if after:
+                            return after
+                        # Sonraki satır
+                        if i + 1 < len(lines):
+                            return lines[i + 1].strip()
+            return "-"
 
-        # TEV değeri sayısal mı kontrol et
+        gonderen      = find_value(["gönderen", "gonderen"])
+        vergino       = find_value(["vergino", "vergi no", "vergi numarası"])
+        tev_raw       = find_value(["telafi edici vergi"])
+        tahsilat_yeri = find_value(["tahsilat yeri"])
+
+        # TEV değerini temizle ve sayısallığını kontrol et
         has_payment = None
-        if tev_value != "-":
-            if re.match(r"^[\d.,]+$", tev_value.strip()):
+        tev_value = tev_raw.strip() if tev_raw else "-"
+
+        if tev_value and tev_value != "-":
+            # Sadece rakam/nokta/virgülden oluşuyorsa direkt kabul
+            if re.match(r"^[\d.,\s]+$", tev_value):
                 has_payment = True
             else:
-                # İçinde rakam geçiyor mu?
-                nums = re.findall(r"[\d]{1,}[.,][\d]+", tev_value)
+                # İçinden sayı çekmeye çalış
+                nums = re.findall(r"\d[\d.,]*", tev_value)
                 if nums:
                     tev_value = nums[0]
                     has_payment = True
 
-        # Tablo araması (fallback)
+        # --- Fallback: HTML tablo araması ---
         if tev_value == "-":
             rows = page.query_selector_all("tr")
             for row in rows:
@@ -121,6 +109,19 @@ def extract_tev_result(page):
                         if val:
                             tev_value = val
                             has_payment = True if re.search(r"\d", val) else None
+
+        # --- Fallback 2: span/div araması ---
+        if tev_value == "-":
+            all_els = page.query_selector_all("span, td, div, label, p, th")
+            for i, el in enumerate(all_els):
+                if "telafi edici vergi" in el.inner_text().lower():
+                    for offset in range(1, 4):
+                        if i + offset < len(all_els):
+                            candidate = all_els[i + offset].inner_text().strip()
+                            if re.match(r"^[\d.,]+$", candidate):
+                                tev_value = candidate
+                                has_payment = True
+                                break
 
         return gonderen, vergino, tev_value, tahsilat_yeri, has_payment
 
@@ -184,7 +185,6 @@ if start_query:
                 page = context.new_page()
                 url = "https://uygulama.gtb.gov.tr/TEV/"
 
-                # Sayfayı sadece bir kez aç
                 page.goto(url)
                 page.wait_for_load_state("networkidle")
                 previous_tescil = None
@@ -203,7 +203,7 @@ if start_query:
                         sorgu_sure = time.time() - sorgu_baslangic
                         toplam_sure = time.time() - toplam_baslangic
                         timer_text.text(
-                            f"⏱ Son sorgu: {sorgu_sure:.1f}s  |  Toplam geçen süre: {toplam_sure:.1f}s"
+                            f"⏱ Son sorgu: {sorgu_sure:.1f}s  |  Toplam: {toplam_sure:.1f}s"
                         )
 
                         gonderen, vergino, tev_value, tahsilat_yeri, has_payment = extract_tev_result(page)
@@ -265,8 +265,10 @@ if start_query:
                 st.session_state.merged_pdf_bytes = merged_buffer.getvalue()
                 merger.close()
 
-            status_text.text(f"✅ Tüm işlemler tamamlandı! ({len(tescil_list)} sorgu)")
-            timer_text.text(f"⏱ Toplam süre: {toplam_sure:.1f} saniye  |  Ortalama: {toplam_sure/len(tescil_list):.1f}s/sorgu")
+            status_text.text(f"✅ Tamamlandı! ({len(tescil_list)} sorgu)")
+            timer_text.text(
+                f"⏱ Toplam süre: {toplam_sure:.1f}s  |  Ortalama: {toplam_sure/len(tescil_list):.1f}s/sorgu"
+            )
 
         except Exception as main_e:
             st.error(f"Sistem Hatası: {str(main_e)}")
@@ -317,7 +319,7 @@ if st.session_state.query_results:
     styled_df = df.style.apply(highlight_row, axis=1)
     st.dataframe(styled_df, use_container_width=True, hide_index=True)
 
-    # Sadece TEV değeri — Excel'e yapıştırılabilir
+    # Sadece TEV değerleri — Excel'e yapıştırılabilir
     st.markdown("**Telafi Edici Vergi Değerleri (Excel'e yapıştırılabilir):**")
     tev_lines = [r["Telafi Edici Vergi"] for r in display_rows]
     st.code("\n".join(tev_lines), language=None)
