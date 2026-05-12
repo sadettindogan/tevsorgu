@@ -215,7 +215,7 @@ if start_query:
 if st.session_state.query_results:
     st.markdown("---")
     
-    # --- ÜSTTEKİ TABLO: SONUCU KOPYALA ---
+    # --- ÜSTTEKİ TABLO: KOPYALANABİLİR ALAN ---
     st.markdown("### 📋 Telafi Edici Vergi Değerleri (Excel'e yapıştırılabilir)")
     
     tev_only_data = []
@@ -228,13 +228,12 @@ if st.session_state.query_results:
             
     df_tev = pd.DataFrame({"Telafi Edici Vergi": tev_only_data})
     
-    # Panoya kopyalamak için veri (başlık hariç)
+    # Hata veren st.copy_button yerine st.code kullanıyoruz (Bu sağ üstte kopyala butonu çıkarır)
     copy_text = "\n".join([str(x) for x in tev_only_data])
+    st.markdown("**Sonucu Kopyala:**")
+    st.code(copy_text, language=None)
     
-    # "Sonucu Kopyala" Butonu
-    st.copy_button(label="📋 Sonucu Kopyala", data=copy_text, use_container_width=True)
-    
-    # Veri Tablosu
+    # Veri Tablosu (Görseldeki gibi kenarlıklı görünmesi için)
     st.dataframe(df_tev, use_container_width=True, hide_index=True)
 
     # --- İNDİRME SEÇENEKLERİ ---
