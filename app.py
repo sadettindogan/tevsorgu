@@ -92,12 +92,13 @@ if start_query:
                     wait_for_result(page, prev_t)
                     
                     res = extract_tev_result(page)
+                    # Sütun isimlerini burada sabitliyoruz
                     results.append({
-                        "Beyanname No": tno,
+                        "Beyanname": tno,
                         "Gönderen": res[0],
-                        "Vergi No": res[1],
-                        "TEV Tutarı": res[2],
-                        "Tahsilat Yeri": res[3],
+                        "VergiNo": res[1],
+                        "Tutar": res[2],
+                        "Tahsilat": res[3],
                         "odeme_var": res[4]
                     })
 
@@ -112,7 +113,7 @@ if start_query:
                 browser.close()
 
             st.session_state.query_results = results
-            if pdf_mode:
+            if pdf_mode and pdf_results:
                 z_buf = io.BytesIO()
                 with zipfile.ZipFile(z_buf, "w") as zf:
                     for f, c in pdf_results.items(): zf.writestr(f, c)
@@ -138,8 +139,9 @@ if st.session_state.query_results:
     df = pd.DataFrame(st.session_state.query_results)
 
     def style_table(row):
+        # Metin kaydırmayı ve fontu zorla
         style = 'font-size: 10px; white-space: normal; word-wrap: break-word;'
-        tev = row["TEV Tutarı"]
+        tev = row["Tutar"]
         if tev == "Kayıt Bulunamadı": bg = "background-color: #f8f9fa;"
         elif tev == "Ödeme Yoktur": bg = "background-color: #f0fff4; color: #1a7f37; font-weight: bold;"
         elif row["odeme_var"] is True and tev not in ["-", "Hata"]: bg = "background-color: #fff5f5; color: #d73a49; font-weight: bold;"
@@ -148,13 +150,15 @@ if st.session_state.query_results:
 
     styled_df = df.style.apply(style_table, axis=1)
 
+    # KeyError riskini ortadan kaldırmak için doğrudan DataFrame sütunlarını kullanıyoruz
     st.dataframe(
         styled_df,
         use_container_width=True,
         hide_index=True,
-        column_order=("Beyanname No", "Gönderen", "Vergi No", "TEV Tutarı", "Tahsilat Yeri"),
+        column_order=("Beyanname", "Gönderen", "VergiNo", "Tutar", "Tahsilat"),
         column_config={
             "Gönderen": st.column_config.TextColumn("Gönderen Ünvanı", width="large"),
-            "Beyanname No": st.column_config.TextColumn("Beyanname No", width="medium")
+            "Beyanname": st.column_config.TextColumn("Beyanname No", width="medium"),
+            "Tutar": st.column_config.TextColumn("TEV Tutarı", width="small")
         }
     )
