@@ -41,41 +41,19 @@ def extract_tev_result(page):
         if "ödeme yoktur" in page_text.lower() or "odeme yoktur" in page_text.lower():
             return "-", "-", "Ödeme Yoktur", "-", False
 
-        lines = [l.strip() for l in page_text.splitlines() if l.strip()]
-
-        # Bilinen label'lar — bunlar VALUE olamaz
-        KNOWN_LABELS = {
-            "gönderen", "gonderen", "vergino", "vergi no", "vergi numarası",
-            "telafi edici vergi", "tahsilat yeri", "ihracat beyannamesi", "ara"
-        }
-
-        def find_value(label_keywords):
-            for i, line in enumerate(lines):
-                line_lower = line.lower().strip()
-                for kw in label_keywords:
-                    if line_lower == kw or line_lower.startswith(kw):
-                        # Sonraki satırları tara, bilinen label değilse al
-                        for offset in range(1, 5):
-                            if i + offset < len(lines):
-                                candidate = lines[i + offset].strip()
-                                candidate_lower = candidate.lower()
-                                # Başka bir label ise atla
-                                if any(candidate_lower == lbl or candidate_lower.startswith(lbl)
-                                       for lbl in KNOWN_LABELS):
-                                    continue
-                                if candidate:
-                                    return candidate
+        def get_by_id(element_id):
+            el = page.query_selector(f"#{element_id}")
+            if el:
+                return el.inner_text().strip()
             return "-"
 
-        gonderen      = find_value(["gönderen", "gonderen"])
-        vergino       = find_value(["vergino", "vergi no", "vergi numarası"])
-        tev_raw       = find_value(["telafi edici vergi"])
-        tahsilat_yeri = find_value(["tahsilat yeri"])
+        gonderen      = get_by_id("Lab_ver_gonderen")
+        vergino       = get_by_id("Lab_ver_vergino")
+        tev_value     = get_by_id("Lab_ver_telafi")
+        tahsilat_yeri = get_by_id("Lab_ver_tahsilat")
 
-        # TEV değerini temizle ve sayısallığını kontrol et
+        # TEV sayısallık kontrolü
         has_payment = None
-        tev_value = tev_raw.strip() if tev_raw else "-"
-
         if tev_value and tev_value != "-":
             if re.match(r"^[\d.,\s]+$", tev_value):
                 has_payment = True
@@ -84,31 +62,6 @@ def extract_tev_result(page):
                 if nums:
                     tev_value = nums[0]
                     has_payment = True
-
-        # --- Fallback: HTML tablo araması ---
-        if tev_value == "-":
-            rows = page.query_selector_all("tr")
-            for row in rows:
-                cells = row.query_selector_all("th, td")
-                for i, cell in enumerate(cells):
-                    if "telafi edici vergi" in cell.inner_text().lower() and i + 1 < len(cells):
-                        val = cells[i + 1].inner_text().strip()
-                        if val:
-                            tev_value = val
-                            has_payment = True if re.search(r"\d", val) else None
-
-        # --- Fallback 2: span/div araması ---
-        if tev_value == "-":
-            all_els = page.query_selector_all("span, td, div, label, p, th")
-            for i, el in enumerate(all_els):
-                if "telafi edici vergi" in el.inner_text().lower():
-                    for offset in range(1, 4):
-                        if i + offset < len(all_els):
-                            candidate = all_els[i + offset].inner_text().strip()
-                            if re.match(r"^[\d.,]+$", candidate):
-                                tev_value = candidate
-                                has_payment = True
-                                break
 
         return gonderen, vergino, tev_value, tahsilat_yeri, has_payment
 
