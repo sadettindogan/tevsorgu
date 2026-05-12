@@ -25,17 +25,21 @@ raw_data = st.text_area("Tescil Numaralari", height=200, placeholder="20230000..
 def extract_tev_result(page):
     """
     Sayfadan Telafi Edici Vergi degerini okur.
-    Sitenin HTML yapisi: label/value cifti, div ya da span seklinde geliyor.
-    Ornek gorunum:
-        Telafi Edici Vergi   153840,41
-    Birden fazla strateji dener.
+    Dönen değerler:
+        (değer, True)  → ödeme var
+        (değer, False) → ödeme yok
+        (değer, None)  → kayıt bulunamadı veya hata
     """
     try:
         page_text = page.inner_text("body")
 
-        # 1. Odeme yoktur kontrolu (kucuk harf)
-        if "odeme yoktur" in page_text.lower() or "\u00f6deme yoktur" in page_text.lower():
-            return "\u00d6deme Yoktur", False
+        # 1a. Odeme yoktur kontrolu
+        if "odeme yoktur" in page_text.lower() or "ödeme yoktur" in page_text.lower():
+            return "Ödeme Yoktur", False
+
+        # 1b. Kayit bulunamadi kontrolu — PDF alınmayacak
+        if "kayıt bulunamadı" in page_text.lower() or "kayit bulunamadi" in page_text.lower():
+            return "Kayıt Bulunamadı", None
 
         # 2. Regex ile satir bazli arama (en guvenilir yontem)
         import re
@@ -66,6 +70,7 @@ def extract_tev_result(page):
                         return cells[i + 1].inner_text().strip(), True
 
         # 4. Sayfa kaynaginda label-value pattern ara (div/span)
+        import re
         all_elements = page.query_selector_all("span, td, div, label, p")
         for i, el in enumerate(all_elements):
             if "telafi edici vergi" in el.inner_text().lower():
@@ -120,6 +125,12 @@ if st.button("Sorgulamayi Baslat", type="primary"):
                             "odeme_var": has_payment
                         })
 
+                        # Kayıt bulunamadıysa (has_payment is None ve değer "Kayıt Bulunamadı")
+                        # PDF almadan geç
+                        if tev_value == "Kayıt Bulunamadı":
+                            progress_bar.progress((index + 1) / len(tescil_list))
+                            continue
+
                         page.emulate_media(media="print")
                         pdf_content = page.pdf(format="A4")
                         pdf_results[f"{tescil_no}.pdf"] = pdf_content
@@ -165,7 +176,10 @@ if st.session_state.query_results:
 
     result_lines = []
     for r in st.session_state.query_results:
-        if r["odeme_var"] is False:
+        if r["deger"] == "Kayıt Bulunamadı":
+            icon = "KAYIT BULUNAMADI"
+            label = "Bu beyannameye ilişkin TEV kaydı bulunamadı"
+        elif r["odeme_var"] is False:
             icon = "ODEME YOKTUR"
             label = "Odeme Yoktur"
         elif r["odeme_var"] is True:
