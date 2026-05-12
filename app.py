@@ -10,7 +10,7 @@ import re
 # --- SAYFA AYARLARI ---
 st.set_page_config(page_title="TEV Odeme Sorgulama", page_icon="", layout="centered")
 
-# CSS ile tüm sayfayı %80 ölçeklendirme (Uzaklaştırma etkisi)
+# CSS ile tüm sayfayı %80 uzaklaştırıyoruz (Yazılar birbirine girmesin diye)
 st.markdown(
     """
     <style>
@@ -18,7 +18,8 @@ st.markdown(
             transform: scale(0.8);
             transform-origin: top center;
         }
-        .stDataFrame div[data-testid="stTable"] {
+        /* Tablo hücre içindeki yazı fontunu küçültüyoruz */
+        [data-testid="stTable"] td, [data-testid="stTable"] th {
             font-size: 10px !important;
         }
     </style>
@@ -92,11 +93,10 @@ if start_query:
                     wait_for_result(page, prev_t)
                     
                     res = extract_tev_result(page)
-                    # Sütun isimlerini burada sabitliyoruz
                     results.append({
                         "Beyanname": tno,
                         "Gönderen": res[0],
-                        "VergiNo": res[1],
+                        "Vergi_No": res[1],
                         "Tutar": res[2],
                         "Tahsilat": res[3],
                         "odeme_var": res[4]
@@ -138,8 +138,8 @@ if st.session_state.query_results:
     st.markdown("### 🔍 Sonuç Detay")
     df = pd.DataFrame(st.session_state.query_results)
 
+    # Renklendirme ve Font Ayarı
     def style_table(row):
-        # Metin kaydırmayı ve fontu zorla
         style = 'font-size: 10px; white-space: normal; word-wrap: break-word;'
         tev = row["Tutar"]
         if tev == "Kayıt Bulunamadı": bg = "background-color: #f8f9fa;"
@@ -150,15 +150,10 @@ if st.session_state.query_results:
 
     styled_df = df.style.apply(style_table, axis=1)
 
-    # KeyError riskini ortadan kaldırmak için doğrudan DataFrame sütunlarını kullanıyoruz
+    # KeyError hatasını önlemek için column_config'i en basite indirdik
     st.dataframe(
         styled_df,
         use_container_width=True,
         hide_index=True,
-        column_order=("Beyanname", "Gönderen", "VergiNo", "Tutar", "Tahsilat"),
-        column_config={
-            "Gönderen": st.column_config.TextColumn("Gönderen Ünvanı", width="large"),
-            "Beyanname": st.column_config.TextColumn("Beyanname No", width="medium"),
-            "Tutar": st.column_config.TextColumn("TEV Tutarı", width="small")
-        }
+        column_order=("Beyanname", "Gönderen", "Vergi_No", "Tutar", "Tahsilat")
     )
