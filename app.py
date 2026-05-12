@@ -6,104 +6,71 @@ import io
 import zipfile
 import pandas as pd
 
-# --- SAYFA AYARLARI ---
-st.set_page_config(page_title="TEV Odeme Sorgulama", layout="wide")
-
+# --- EN SADE VE STABİL VERSİYON ---
+st.set_page_config(page_title="TEV Sorgu Sistemi", layout="wide")
 st.title("TEV Ödeme Sorgulama Portali")
 
-# --- SESSION STATE ---
-if "query_results" not in st.session_state: st.session_state.query_results = None
-if "zip_bytes" not in st.session_state: st.session_state.zip_bytes = None
-if "merged_pdf_bytes" not in st.session_state: st.session_state.merged_pdf_bytes = None
+if "results" not in st.session_state: st.session_state.results = None
+if "zip" not in st.session_state: st.session_state.zip = None
+if "pdf" not in st.session_state: st.session_state.pdf = None
 
-raw_data = st.text_area("Tescil Numaraları", height=150, placeholder="Her satıra bir numara gelecek şekilde yazın...")
+raw_data = st.text_area("Tescil Numaraları", height=150)
+col1, col2 = st.columns(2)
+with col1: btn_sorgu = st.button("🔍 Sadece Sorgula", use_container_width=True, type="primary")
+with col2: btn_pdf = st.button("📄 Sorgula + PDF", use_container_width=True)
 
-col_btn1, col_btn2 = st.columns(2)
-with col_btn1:
-    btn_sadece_sonuc = st.button("🔍 Sorgula (Sadece Sonuç Gösterir)", use_container_width=True, type="primary")
-with col_btn2:
-    btn_pdf_al = st.button("📄 Sorgula (Sonuç + PDF Alır)", use_container_width=True)
-
-pdf_mode = btn_pdf_al
-start_query = btn_sadece_sonuc or btn_pdf_al
-
-def extract_tev_result(page):
-    try:
-        page_text = page.inner_text("body")
-        if "kayıt bulunamadı" in page_text.lower() or "kayit bulunamadi" in page_text.lower():
-            return "-", "-", "Kayıt Bulunamadı", "-", None
-        if "ödeme yoktur" in page_text.lower() or "odeme yoktur" in page_text.lower():
-            return "-", "-", "Ödeme Yoktur", "-", False
-
-        def get_by_id(element_id):
-            el = page.query_selector(f"#{element_id}")
-            return el.inner_text().strip() if el else "-"
-
-        return get_by_id("Lab_ver_gonderen"), get_by_id("Lab_ver_vergino"), get_by_id("Lab_ver_telafi"), get_by_id("Lab_ver_tahsilat"), True
-    except:
-        return "-", "-", "Hata", "-", None
-
-if start_query:
-    tescil_list = [t.strip() for t in raw_data.split('\n') if t.strip()]
-    if tescil_list:
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        pdf_results, pdf_list_for_merge, results = {}, [], []
+if (btn_sorgu or btn_pdf) and raw_data:
+    t_list = [t.strip() for t in raw_data.split('\n') if t.strip()]
+    results, pdf_files = [], []
+    
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
+        page = browser.new_page()
+        page.goto("https://uygulama.gtb.gov.tr/TEV/")
         
-        try:
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
-                page = browser.new_page()
-                page.goto("https://uygulama.gtb.gov.tr/TEV/")
+        prog = st.progress(0)
+        for i, tno in enumerate(t_list):
+            try:
+                page.fill("#TextBox_Beyanname", tno)
+                page.click("#Btn_Ara")
+                time.sleep(2) # En güvenli bekleme süresi
                 
-                for i, tno in enumerate(tescil_list):
-                    status_text.text(f"⏳ Sorgulanıyor: {tno} ({i+1}/{len(tescil_list)})")
-                    page.fill("#TextBox_Beyanname", tno)
-                    page.click("#Btn_Ara")
-                    time.sleep(1.5) # Bekleme süresini stabilite için sabit tuttuk
-                    
-                    res = extract_tev_result(page)
-                    results.append({
-                        "Beyanname No": tno,
-                        "Gonderen": res[0],
-                        "Vergi No": res[1],
-                        "Tutar": res[2],
-                        "Tahsilat": res[3]
-                    })
+                def get_t(id):
+                    el = page.query_selector(f"#{id}")
+                    return el.inner_text().strip() if el else "-"
+                
+                res_data = {
+                    "Beyanname": tno,
+                    "Gonderen": get_t("Lab_ver_gonderen"),
+                    "VergiNo": get_t("Lab_ver_vergino"),
+                    "Tutar": get_t("Lab_ver_telafi"),
+                    "Tahsilat": get_t("Lab_ver_tahsilat")
+                }
+                results.append(res_data)
 
-                    if pdf_mode and res[2] not in ["Kayıt Bulunamadı", "Hata"]:
-                        page.emulate_media(media="print")
-                        pdf_c = page.pdf(format="A4")
-                        pdf_results[f"{tno}.pdf"] = pdf_c
-                        pdf_list_for_merge.append(pdf_c)
-                    
-                    progress_bar.progress((i + 1) / len(tescil_list))
-                browser.close()
+                if btn_pdf and res_data["Tutar"] not in ["-", "Kayıt Bulunamadı"]:
+                    page.emulate_media(media="print")
+                    pdf_files.append((tno, page.pdf(format="A4")))
+            except:
+                results.append({"Beyanname": tno, "Gonderen": "HATA", "VergiNo": "-", "Tutar": "-", "Tahsilat": "-"})
+            prog.progress((i + 1) / len(t_list))
+        browser.close()
 
-            st.session_state.query_results = results
-            if pdf_mode and pdf_results:
-                z_buf = io.BytesIO()
-                with zipfile.ZipFile(z_buf, "w") as zf:
-                    for f, c in pdf_results.items(): zf.writestr(f, c)
-                st.session_state.zip_bytes = z_buf.getvalue()
+    st.session_state.results = results
+    if pdf_files:
+        # ZIP
+        z_io = io.BytesIO()
+        with zipfile.ZipFile(z_io, "w") as zf:
+            for n, c in pdf_files: zf.writestr(f"{n}.pdf", c)
+        st.session_state.zip = z_io.getvalue()
+        # MERGE
+        merger = PdfWriter()
+        for _, c in pdf_files: merger.append(io.BytesIO(c))
+        m_io = io.BytesIO()
+        merger.write(m_io)
+        st.session_state.pdf = m_io.getvalue()
 
-                merger = PdfWriter()
-                for p_data in pdf_list_for_merge: merger.append(io.BytesIO(p_data))
-                m_buf = io.BytesIO()
-                merger.write(m_buf)
-                st.session_state.merged_pdf_bytes = m_buf.getvalue()
-            status_text.text("✅ Tamamlandı!")
-        except Exception as e:
-            st.error(f"Hata: {e}")
-
-if st.session_state.query_results:
-    st.markdown("---")
-    if st.session_state.zip_bytes or st.session_state.merged_pdf_bytes:
-        c1, c2 = st.columns(2)
-        if st.session_state.merged_pdf_bytes: c1.download_button("📄 Tek PDF", st.session_state.merged_pdf_bytes, "Tev.pdf", use_container_width=True)
-        if st.session_state.zip_bytes: c2.download_button("📦 ZIP", st.session_state.zip_bytes, "Tev.zip", use_container_width=True)
-
-    st.markdown("### 🔍 Sonuç Detay")
-    df = pd.DataFrame(st.session_state.query_results)
-    # En güvenli tablo gösterimi: Hiçbir konfigürasyon yapmıyoruz, hata payı sıfır.
-    st.dataframe(df, use_container_width=True, hide_index=True)
+if st.session_state.results:
+    if st.session_state.pdf:
+        st.download_button("📄 PDF İndir", st.session_state.pdf, "Sonuclar.pdf")
+    st.dataframe(pd.DataFrame(st.session_state.results), use_container_width=True, hide_index=True)
