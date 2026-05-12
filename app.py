@@ -256,10 +256,24 @@ if st.session_state.query_results:
     styled_df = df.style.apply(highlight_row, axis=1)
     st.dataframe(styled_df, use_container_width=True, hide_index=True)
 
-    # Sadece TEV değerleri — Excel'e yapıştırılabilir
+    # --- ÖZEL İSTENEN BÖLÜM: TEV TABLOSU ---
+    st.markdown("---")
     st.markdown("**Telafi Edici Vergi Değerleri (Excel'e yapıştırılabilir):**")
-    tev_lines = [r["Telafi Edici Vergi"] for r in display_rows]
-    st.code("\n".join(tev_lines), language=None)
+    
+    # Sadece TEV sütununu içeren tablo (Metinsel ifadeler yerine temiz boşluk bırakır)
+    tev_only_data = []
+    for r in display_rows:
+        val = r["Telafi Edici Vergi"]
+        # Eğer sonuç bir tutar değilse (Kayıt yoksa vb.) boş göster ki Excel'de hücre kalsın
+        if val in ["Kayıt Bulunamadı", "Ödeme Yoktur", "Hata", "-"]:
+            tev_only_data.append("")
+        else:
+            tev_only_data.append(val)
+            
+    df_tev = pd.DataFrame({"Telafi Edici Vergi": tev_only_data})
+    
+    # Üstteki tablo gibi kenarlıklı ve profesyonel dursun diye dataframe olarak basıyoruz
+    st.dataframe(df_tev, use_container_width=True, hide_index=True)
 
 
 # --- İNDİRME SEÇENEKLERİ ---
