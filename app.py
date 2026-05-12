@@ -1,109 +1,99 @@
 import streamlit as st
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+from playwright.sync_api import sync_playwright
 import os
 import time
-import glob
+import io
+import zipfile
 
 # --- SAYFA AYARLARI ---
-st.set_page_config(page_title="TEV Ödeme Sorgulama", layout="wide")
-st.title("📄 TEV Ödeme Sorgulama Sistemi")
-st.info("Tescil numaralarını alta yapıştırın ve işlemi başlatın.")
+st.set_page_config(page_title="TEV Ödeme Sorgulama", page_icon="📄")
+st.title("📄 TEV Ödeme Sorgulama Portalı")
 
-# --- SIDEBAR / AYARLAR ---
-with st.sidebar:
-    st.header("⚙️ Ayarlar")
-    pdf_folder = st.text_input("PDF Kayıt Klasörü", value=os.path.join(os.path.expanduser("~"), "Desktop", "TEV_Sorgu_Sonuclari"))
-    wait_time = st.slider("Bekleme Süresi (Saniye)", 3, 15, 6)
+st.markdown("""
+Tescil numaralarını Excel'den kopyalayıp aşağıdaki kutuya yapıştırın. 
+Sistem her birini sorgulayıp PDF olarak hazırlayacaktır.
+""")
+
+# --- SESSION STATE ---
+if "zip_bytes" not in st.session_state:
+    st.session_state.zip_bytes = None
 
 # --- VERİ GİRİŞİ ---
-raw_data = st.text_area("Tescil Numaraları (Her satıra bir tane gelecek şekilde yapıştırın)", height=200)
+raw_data = st.text_area("Tescil Numaraları (Her satıra bir tane)", height=200, placeholder="20230000... \n20240000...")
 
-if st.button("Sorgulamayı Başlat"):
-    # Girdiyi temizle ve listeye çevir
+if st.button("🚀 Sorgulamayı Başlat", type="primary"):
     tescil_list = [t.strip() for t in raw_data.split('\n') if t.strip()]
     
     if not tescil_list:
-        st.error("Lütfen en az bir tescil numarası girin!")
+        st.error("⚠️ Lütfen en az bir tescil numarası girin!")
     else:
-        if not os.path.exists(pdf_folder):
-            os.makedirs(pdf_folder, exist_ok=True)
-
         progress_bar = st.progress(0)
         status_text = st.empty()
-        log_area = st.expander("İşlem Günlüğü", expanded=True)
-
+        pdf_results = {} # Dosya adı: Byte içeriği
+        
         try:
-            # --- CHROME AYARLARI ---
-            chrome_options = Options()
-            chrome_options.add_argument("--start-maximized")
-            
-            # PDF yazdırma ayarları
-            prefs = {
-                "printing.print_preview_sticky_settings.appState": f'{{"recentDestinations": [{{"id": "Save as PDF", "origin": "local"}}], "selectedDestinationId": "Save as PDF", "version": 2}}',
-                "savefile.default_directory": pdf_folder
-            }
-            chrome_options.add_experimental_option("prefs", prefs)
-            chrome_options.add_argument("--kiosk-printing")
-
-            driver = webdriver.Chrome(options=chrome_options)
-            wait = WebDriverWait(driver, 20)
-            url = "https://uygulama.gtb.gov.tr/TEV/"
-
-            for index, tescil_no in enumerate(tescil_list):
-                try:
-                    status_text.text(f"Şu an sorgulanıyor: {tescil_no} ({index+1}/{len(tescil_list)})")
-                    
-                    before_pdfs = set(glob.glob(os.path.join(pdf_folder, "*.pdf")))
-                    
-                    driver.get(url)
-                    
-                    # Input kutusu
-                    input_box = wait.until(EC.presence_of_element_located((By.ID, "TextBox_Beyanname")))
-                    input_box.clear()
-                    input_box.send_keys(tescil_no)
-
-                    # Ara butonu
-                    ara_btn = wait.until(EC.element_to_be_clickable((By.ID, "Btn_Ara")))
-                    ara_btn.click()
-
-                    # Sonuç için bekleme
-                    time.sleep(wait_time)
-
-                    # PDF Yazdır
-                    driver.execute_script("window.print();")
-                    time.sleep(3)
-
-                    # Dosya isimlendirme
-                    after_pdfs = set(glob.glob(os.path.join(pdf_folder, "*.pdf")))
-                    new_pdfs = list(after_pdfs - before_pdfs)
-
-                    if new_pdfs:
-                        latest_pdf = max(new_pdfs, key=os.path.getctime)
-                        new_pdf_path = os.path.join(pdf_folder, f"{tescil_no}.pdf")
-                        
-                        # Eğer dosya zaten varsa ismini değiştir
-                        if os.path.exists(new_pdf_path):
-                            new_pdf_path = os.path.join(pdf_folder, f"{tescil_no}_{int(time.time())}.pdf")
-                        
-                        os.rename(latest_pdf, new_pdf_path)
-                        log_area.write(f"✅ Başarılı: {tescil_no}")
-                    else:
-                        log_area.write(f"⚠️ PDF oluşturulamadı: {tescil_no}")
-
-                except Exception as e:
-                    log_area.write(f"❌ Hata ({tescil_no}): {str(e)}")
+            with sync_playwright() as p:
+                # Tarayıcı başlatma (Paylaştığın çalışan kodun ayarlarıyla aynı)
+                browser = p.chromium.launch(
+                    headless=True,
+                    executable_path="/usr/bin/chromium",
+                    args=["--no-sandbox", "--disable-dev-shm-usage"]
+                )
                 
-                # Progress güncelle
-                progress_bar.progress((index + 1) / len(tescil_list))
+                # PDF yazdırma desteği için context
+                context = browser.new_context()
+                page = context.new_page()
+                url = "https://uygulama.gtb.gov.tr/TEV/"
 
-            driver.quit()
-            st.success("Tüm işlemler tamamlandı!")
-            st.balloons()
+                for index, tescil_no in enumerate(tescil_list):
+                    try:
+                        status_text.text(f"Sorgulanıyor: {tescil_no} ({index+1}/{len(tescil_list)})")
+                        
+                        # Sayfaya git
+                        page.goto(url)
+                        
+                        # Input ve Ara
+                        page.fill("#TextBox_Beyanname", tescil_no)
+                        page.click("#Btn_Ara")
+                        
+                        # Sonucun yüklenmesi için kısa bir bekleme
+                        time.sleep(5) 
+                        
+                        # Sayfayı PDF olarak kaydet
+                        # Emulate media 'print' yaparak Selenium'daki window.print() etkisini yaratıyoruz
+                        page.emulate_media(media="print")
+                        pdf_content = page.pdf(format="A4")
+                        
+                        pdf_results[f"{tescil_no}.pdf"] = pdf_content
+                        st.write(f"✅ {tescil_no} hazır.")
+                        
+                    except Exception as e:
+                        st.error(f"❌ {tescil_no} sorgulanırken hata oluştu: {str(e)}")
+                    
+                    progress_bar.progress((index + 1) / len(tescil_list))
+
+                browser.close()
+
+            # ZIP Dosyası Oluşturma
+            if pdf_results:
+                zip_buffer = io.BytesIO()
+                with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for filename, content in pdf_results.items():
+                        zf.writestr(filename, content)
+                
+                st.session_state.zip_bytes = zip_buffer.getvalue()
+                st.success("Tüm sorgulamalar tamamlandı!")
+            else:
+                st.warning("Hiç PDF oluşturulamadı.")
 
         except Exception as main_e:
-            st.error(f"Genel bir hata oluştu: {main_e}")
+            st.error(f"Sistem Hatası: {str(main_e)}")
+
+# --- İNDİRME BUTONU ---
+if st.session_state.zip_bytes:
+    st.download_button(
+        label="📥 Tüm PDF'leri İndir (ZIP)",
+        data=st.session_state.zip_bytes,
+        file_name="TEV_Sorgu_Sonuclari.zip",
+        mime="application/zip"
+    )
