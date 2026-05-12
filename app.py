@@ -23,25 +23,63 @@ raw_data = st.text_area("Tescil Numaralari", height=200, placeholder="20230000..
 
 
 def extract_tev_result(page):
+    """
+    Sayfadan Telafi Edici Vergi degerini okur.
+    Sitenin HTML yapisi: label/value cifti, div ya da span seklinde geliyor.
+    Ornek gorunum:
+        Telafi Edici Vergi   153840,41
+    Birden fazla strateji dener.
+    """
     try:
-        page_text = page.inner_text("body").lower()
-        if "odeme yoktur" in page_text or "\u00f6deme yoktur" in page_text:
-            return "Odeme Yoktur", False
+        page_text = page.inner_text("body")
 
+        # 1. Odeme yoktur kontrolu (kucuk harf)
+        if "odeme yoktur" in page_text.lower() or "\u00f6deme yoktur" in page_text.lower():
+            return "\u00d6deme Yoktur", False
+
+        # 2. Regex ile satir bazli arama (en guvenilir yontem)
+        import re
+        lines = [l.strip() for l in page_text.splitlines() if l.strip()]
+        for i, line in enumerate(lines):
+            if "telafi edici vergi" in line.lower():
+                # Ayni satirda rakam var mi?
+                same_line = re.search(r"[\d.,]+", line.replace(line[:line.lower().index("telafi")], ""))
+                if same_line:
+                    return same_line.group(), True
+                # Bir sonraki satira bak
+                if i + 1 < len(lines):
+                    next_line = lines[i + 1].strip()
+                    if re.match(r"^[\d.,]+$", next_line):
+                        return next_line, True
+                    # Sonraki satirda baska bir sayi varsa al
+                    nums = re.findall(r"[\d]{1,}[.,][\d]+", next_line)
+                    if nums:
+                        return nums[0], True
+
+        # 3. Tablo yapisi varsa kontrol et (th/td)
         rows = page.query_selector_all("tr")
         for row in rows:
             cells = row.query_selector_all("th, td")
             for i, cell in enumerate(cells):
-                cell_text = cell.inner_text().strip()
-                if "telafi edici vergi" in cell_text.lower():
+                if "telafi edici vergi" in cell.inner_text().lower():
                     if i + 1 < len(cells):
-                        value = cells[i + 1].inner_text().strip()
-                        return value, True
+                        return cells[i + 1].inner_text().strip(), True
+
+        # 4. Sayfa kaynaginda label-value pattern ara (div/span)
+        all_elements = page.query_selector_all("span, td, div, label, p")
+        for i, el in enumerate(all_elements):
+            if "telafi edici vergi" in el.inner_text().lower():
+                # Kardes veya sonraki element
+                for offset in range(1, 4):
+                    if i + offset < len(all_elements):
+                        candidate = all_elements[i + offset].inner_text().strip()
+                        if re.match(r"^[\d.,]+$", candidate):
+                            return candidate, True
 
         return "Deger okunamadi", None
 
-    except Exception:
-        return "Hata", None
+    except Exception as ex:
+        return f"Hata: {str(ex)}", None
 
 
 if st.button("Sorgulamayi Baslat", type="primary"):
