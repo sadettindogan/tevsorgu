@@ -8,7 +8,8 @@ import pandas as pd
 import re
 
 # --- SAYFA AYARLARI ---
-st.set_page_config(page_title="TEV Odeme Sorgulama", page_icon="")
+# layout="wide" eklenerek sayfa yatayda genişletildi.
+st.set_page_config(page_title="TEV Odeme Sorgulama", page_icon="", layout="wide")
 st.title("TEV Ödeme Sorgulama Portali")
 
 st.markdown("Tescil numaralarını Excel'den kopyalayıp yapıştırın.")
@@ -18,7 +19,7 @@ for key in ["zip_bytes", "merged_pdf_bytes", "query_results"]:
     if key not in st.session_state:
         st.session_state[key] = None
 
-raw_data = st.text_area("Tescil Numaraları", height=200, placeholder="20230000...")
+raw_data = st.text_area("Tescil Numaraları", height=150, placeholder="20230000...")
 
 # --- SORGU MODU SEÇİMİ ---
 col_btn1, col_btn2 = st.columns(2)
@@ -52,7 +53,6 @@ def extract_tev_result(page):
         tev_value     = get_by_id("Lab_ver_telafi")
         tahsilat_yeri = get_by_id("Lab_ver_tahsilat")
 
-        # TEV sayısallık kontrolü
         has_payment = None
         if tev_value and tev_value != "-":
             if re.match(r"^[\d.,\s]+$", tev_value):
@@ -202,10 +202,8 @@ if start_query:
                 st.session_state.merged_pdf_bytes = merged_buffer.getvalue()
                 merger.close()
 
-            status_text.text(f"✅ Tamamlandı! ({len(tescil_list)} sorgu)")
-            timer_text.text(
-                f"⏱ Toplam süre: {toplam_sure:.1f}s  |  Ortalama: {toplam_sure/len(tescil_list):.1f}s/sorgu"
-            )
+            status_text.text(f"✅ Tamamlandı!")
+            timer_text.text(f"⏱ Toplam süre: {toplam_sure:.1f}s")
 
         except Exception as main_e:
             st.error(f"Sistem Hatası: {str(main_e)}")
@@ -215,16 +213,16 @@ if start_query:
 if st.session_state.query_results:
     st.markdown("---")
     
-    # --- İNDİRME SEÇENEKLERİ (ÖNE ALINDI) ---
+    # --- İNDİRME SEÇENEKLERİ ---
     if st.session_state.zip_bytes or st.session_state.merged_pdf_bytes:
         st.markdown("### 📥 PDF İndir")
         col1, col2 = st.columns(2)
         with col1:
             if st.session_state.merged_pdf_bytes:
-                st.download_button("Birleştirilmiş Tek PDF İndir", st.session_state.merged_pdf_bytes, "Tev_Birlestirilmis.pdf", "application/pdf", use_container_width=True)
+                st.download_button("📄 Birleştirilmiş Tek PDF İndir", st.session_state.merged_pdf_bytes, "Tev_Birlestirilmis.pdf", "application/pdf", use_container_width=True)
         with col2:
             if st.session_state.zip_bytes:
-                st.download_button("PDF'leri Ayrı Ayrı İndir (ZIP)", st.session_state.zip_bytes, "Tev_Arsiv.zip", "application/zip", use_container_width=True)
+                st.download_button("📦 PDF'leri ZIP Olarak İndir", st.session_state.zip_bytes, "Tev_Arsiv.zip", "application/zip", use_container_width=True)
 
     # --- SONUÇ DETAY TABLOSU ---
     st.markdown("### 🔍 Sonuç Detay")
@@ -242,24 +240,28 @@ if st.session_state.query_results:
 
     df_full = pd.DataFrame(display_rows)
 
+    # Font boyutunu küçültüp görüntüyü "uzaklaştıran" stil ayarı
     def style_dataframe(row):
         tev = row["Telafi Edici Vergi"]
-        base_style = 'font-size: 12px; white-space: normal;' 
+        # font-size: 11px ile daha kompakt görünüm sağlandı
+        base_style = 'font-size: 11px; white-space: normal;' 
         
         if tev == "Kayıt Bulunamadı":
-            color = "background-color: #f0f0f0; color: #888;"
+            color = "background-color: #f8f9fa; color: #6c757d;"
         elif tev == "Ödeme Yoktur":
-            color = "background-color: #e6f4ea; color: #2e7d32;"
+            color = "background-color: #f0fff4; color: #1a7f37;"
         elif row["odeme_var"] is True:
-            color = "background-color: #fdecea; color: #c62828;"
+            color = "background-color: #fff5f5; color: #d73a49;"
         elif tev == "Hata":
-            color = "background-color: #fff8e1; color: #f57f17;"
+            color = "background-color: #fffbea; color: #9a6700;"
         else:
             color = ""
             
         return [f"{base_style} {color}"] * len(row)
 
     styled_df = df_full.style.apply(style_dataframe, axis=1)
+    
+    # Tabloyu göster
     st.dataframe(
         styled_df, 
         use_container_width=True, 
