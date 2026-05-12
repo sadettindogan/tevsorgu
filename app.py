@@ -32,50 +32,39 @@ start_query = btn_sadece_sonuc or btn_pdf_al
 
 
 def extract_tev_result(page):
-    """
-    Sayfadan TEV alanlarını okur.
-    Sayfa yapısı: label ve değer ayrı satırlarda (tablo/grid).
-      Gönderen
-      STARCOOL ...
-      Vergino
-      7810163646
-      Telafi Edici Vergi
-      1908,61
-      Tahsilat Yeri
-      Banka
-
-    Döner: (gonderen, vergino, tev_degeri, tahsilat_yeri, has_payment)
-    """
     try:
         page_text = page.inner_text("body")
 
-        # Kayıt bulunamadı kontrolü
         if "kayıt bulunamadı" in page_text.lower() or "kayit bulunamadi" in page_text.lower():
             return "-", "-", "Kayıt Bulunamadı", "-", None
 
-        # Ödeme yoktur kontrolü
         if "ödeme yoktur" in page_text.lower() or "odeme yoktur" in page_text.lower():
             return "-", "-", "Ödeme Yoktur", "-", False
 
         lines = [l.strip() for l in page_text.splitlines() if l.strip()]
 
+        # Bilinen label'lar — bunlar VALUE olamaz
+        KNOWN_LABELS = {
+            "gönderen", "gonderen", "vergino", "vergi no", "vergi numarası",
+            "telafi edici vergi", "tahsilat yeri", "ihracat beyannamesi", "ara"
+        }
+
         def find_value(label_keywords):
-            """
-            Verilen keyword'lerden birini içeren satırı bulur,
-            sonraki anlamlı satırı değer olarak döner.
-            Aynı satırda da değer arayabilir (fallback).
-            """
             for i, line in enumerate(lines):
-                line_lower = line.lower()
+                line_lower = line.lower().strip()
                 for kw in label_keywords:
-                    if kw in line_lower:
-                        # Önce aynı satırda label'dan sonrası
-                        after = line[line_lower.index(kw) + len(kw):].strip()
-                        if after:
-                            return after
-                        # Sonraki satır
-                        if i + 1 < len(lines):
-                            return lines[i + 1].strip()
+                    if line_lower == kw or line_lower.startswith(kw):
+                        # Sonraki satırları tara, bilinen label değilse al
+                        for offset in range(1, 5):
+                            if i + offset < len(lines):
+                                candidate = lines[i + offset].strip()
+                                candidate_lower = candidate.lower()
+                                # Başka bir label ise atla
+                                if any(candidate_lower == lbl or candidate_lower.startswith(lbl)
+                                       for lbl in KNOWN_LABELS):
+                                    continue
+                                if candidate:
+                                    return candidate
             return "-"
 
         gonderen      = find_value(["gönderen", "gonderen"])
@@ -88,11 +77,9 @@ def extract_tev_result(page):
         tev_value = tev_raw.strip() if tev_raw else "-"
 
         if tev_value and tev_value != "-":
-            # Sadece rakam/nokta/virgülden oluşuyorsa direkt kabul
             if re.match(r"^[\d.,\s]+$", tev_value):
                 has_payment = True
             else:
-                # İçinden sayı çekmeye çalış
                 nums = re.findall(r"\d[\d.,]*", tev_value)
                 if nums:
                     tev_value = nums[0]
@@ -130,9 +117,6 @@ def extract_tev_result(page):
 
 
 def wait_for_result(page, previous_tescil=None):
-    """
-    Yeni sonucun yüklendiğini akıllıca bekler. Maks 10 saniye.
-    """
     timeout = 10
     interval = 0.3
     elapsed = 0
