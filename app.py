@@ -215,7 +215,7 @@ if start_query:
 if st.session_state.query_results:
     st.markdown("---")
     
-    # --- ÜSTTEKİ TABLO: KOPYALANABİLİR ALAN ---
+    # --- ÜSTTEKİ TABLO: TEV DEĞERLERİ ---
     st.markdown("### 📋 Telafi Edici Vergi Değerleri (Excel'e yapıştırılabilir)")
     
     tev_only_data = []
@@ -228,13 +228,19 @@ if st.session_state.query_results:
             
     df_tev = pd.DataFrame({"Telafi Edici Vergi": tev_only_data})
     
-    # Hata veren st.copy_button yerine st.code kullanıyoruz (Bu sağ üstte kopyala butonu çıkarır)
-    copy_text = "\n".join([str(x) for x in tev_only_data])
-    st.markdown("**Sonucu Kopyala:**")
-    st.code(copy_text, language=None)
-    
-    # Veri Tablosu (Görseldeki gibi kenarlıklı görünmesi için)
+    # Veri Tablosu
     st.dataframe(df_tev, use_container_width=True, hide_index=True)
+
+    # Veriyi kopyalamak için string oluştur (Başlık hariç, alt alta)
+    copy_text = "\n".join([str(x) for x in tev_only_data])
+    
+    # Tablonun hemen altına kopyalama butonu (st.code yerine st.button mantığıyla çalışan güvenli sürüm)
+    # Eğer sürüm desteklemiyorsa st.code kopyalaması için alternatif olarak kalabilir
+    try:
+        st.copy_button(label="📋 Sonucu Kopyala", data=copy_text, use_container_width=True)
+    except Exception:
+        st.info("Kopyalamak için aşağıdaki alanı kullanabilirsiniz:")
+        st.code(copy_text, language=None)
 
     # --- İNDİRME SEÇENEKLERİ ---
     if st.session_state.zip_bytes or st.session_state.merged_pdf_bytes:
