@@ -12,7 +12,7 @@ st.title("📄 TEV Ödeme Sorgulama Portalı")
 
 st.markdown("""
 Tescil numaralarını Excel'den kopyalayıp yapıştırın. 
-Sistem her birini sorgulayacak, hem tek tek hem de **birleştirilmiş** olarak sunacaktır.
+Sistem veriyi okuyacak, ekrana sonucu basacak ve PDF'leri hazırlayacaktır.
 """)
 
 # --- SESSION STATE ---
@@ -20,6 +20,8 @@ if "zip_bytes" not in st.session_state:
     st.session_state.zip_bytes = None
 if "merged_pdf_bytes" not in st.session_state:
     st.session_state.merged_pdf_bytes = None
+if "results_text" not in st.session_state:
+    st.session_state.results_text = ""
 
 # --- VERİ GİRİŞİ ---
 raw_data = st.text_area("Tescil Numaraları", height=200, placeholder="20230000...")
@@ -32,14 +34,14 @@ if st.button("🚀 Sorgulamayı Başlat", type="primary"):
     else:
         progress_bar = st.progress(0)
         status_text = st.empty()
-        pdf_results = {} # Dosya adı: Byte içeriği
-        pdf_list_for_merge = [] # Birleştirme için byte listesi
-        
+        pdf_results = {}
+        pdf_list_for_merge = []
+        extracted_data = [] # Kopyalanacak metinler için
+
         try:
             with sync_playwright() as p:
                 browser = p.chromium.launch(
                     headless=True,
-                    executable_path="/usr/bin/chromium",
                     args=["--no-sandbox", "--disable-dev-shm-usage"]
                 )
                 context = browser.new_context()
@@ -53,14 +55,31 @@ if st.button("🚀 Sorgulamayı Başlat", type="primary"):
                         page.fill("#TextBox_Beyanname", tescil_no)
                         page.click("#Btn_Ara")
                         
-                        time.sleep(5) 
+                        # Sayfanın yüklenmesi ve verinin gelmesi için bekleme
+                        time.sleep(3) 
+
+                        # --- VERİ OKUMA MANTIĞI ---
+                        # Sayfada 'Telafi Edici Vergi' yazan hücrenin yanındaki değeri bulmaya çalışır
+                        try:
+                            # Tablo yapısına göre vergi değerini çeker
+                            val_element = page.query_selector("td:has-text('Telafi Edici Vergi') + td")
+                            if val_element:
+                                tev_degeri = val_element.inner_text().strip()
+                                result_msg = f"{tescil_no}: {tev_degeri}"
+                            else:
+                                result_msg = f"{tescil_no}: Ödeme Yoktur"
+                        except:
+                            result_msg = f"{tescil_no}: Ödeme Yoktur"
                         
+                        extracted_data.append(result_msg)
+                        
+                        # PDF Oluşturma
                         page.emulate_media(media="print")
                         pdf_content = page.pdf(format="A4")
-                        
                         pdf_results[f"{tescil_no}.pdf"] = pdf_content
                         pdf_list_for_merge.append(pdf_content)
-                        st.write(f"✅ {tescil_no} hazır.")
+                        
+                        st.write(f"✅ {result_msg}")
                         
                     except Exception as e:
                         st.error(f"❌ {tescil_no} hatası: {str(e)}")
@@ -69,7 +88,10 @@ if st.button("🚀 Sorgulamayı Başlat", type="primary"):
 
                 browser.close()
 
-            # 1. ZIP Oluşturma (Tek Tek PDF'ler)
+            # Sonuçları toplu metin haline getir
+            st.session_state.results_text = "\n".join(extracted_data)
+
+            # ZIP ve PDF Birleştirme İşlemleri
             if pdf_results:
                 zip_buffer = io.BytesIO()
                 with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -77,7 +99,6 @@ if st.button("🚀 Sorgulamayı Başlat", type="primary"):
                         zf.writestr(filename, content)
                 st.session_state.zip_bytes = zip_buffer.getvalue()
 
-                # 2. PDF Birleştirme İşlemi
                 merger = PdfWriter()
                 for pdf_data in pdf_list_for_merge:
                     merger.append(io.BytesIO(pdf_data))
@@ -88,15 +109,21 @@ if st.button("🚀 Sorgulamayı Başlat", type="primary"):
                 merger.close()
 
                 st.success("Tüm işlemler tamamlandı!")
-            else:
-                st.warning("Sonuç alınamadı.")
 
         except Exception as main_e:
             st.error(f"Sistem Hatası: {str(main_e)}")
 
+# --- SONUÇLARI GÖSTER VE KOPYALA ---
+if st.session_state.results_text:
+    st.markdown("---")
+    st.subheader("📋 Sorgulama Sonuçları")
+    # st.code bileşeni sağ üstte otomatik "copy" butonu sunar
+    st.code(st.session_state.results_text, language="text")
+    st.caption("Yukarıdaki sonuçları sağ üstteki butona basarak kopyalayabilirsiniz.")
+
 # --- İNDİRME SEÇENEKLERİ ---
 if st.session_state.zip_bytes or st.session_state.merged_pdf_bytes:
-    st.markdown("### 📥 Sonuçları İndir")
+    st.markdown("### 📥 PDF Dosyalarını İndir")
     col1, col2 = st.columns(2)
     
     with col1:
