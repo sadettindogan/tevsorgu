@@ -4,14 +4,14 @@ from pypdf import PdfWriter
 import time
 import io
 import zipfile
+import pandas as pd
 
 # --- SAYFA AYARLARI ---
 st.set_page_config(page_title="TEV Odeme Sorgulama", page_icon="")
-st.title(" TEV Odeme Sorgulama Portali")
+st.title("TEV Ödeme Sorgulama Portali")
 
 st.markdown("""
-Tescil numaralarini Excel'den kopyalayip yapistirin.
-Sistem her birini sorgulayacak, hem tek tek hem de **birlestirilmis** olarak sunacaktir.
+Tescil numaralarını Excel'den kopyalayıp yapıştırın.
 """)
 
 # --- SESSION STATE ---
@@ -19,80 +19,102 @@ for key in ["zip_bytes", "merged_pdf_bytes", "query_results"]:
     if key not in st.session_state:
         st.session_state[key] = None
 
-raw_data = st.text_area("Tescil Numaralari", height=200, placeholder="20230000...")
+raw_data = st.text_area("Tescil Numaraları", height=200, placeholder="20230000...")
+
+# --- SORGU MODU SEÇİMİ ---
+col_btn1, col_btn2 = st.columns(2)
+with col_btn1:
+    btn_sadece_sonuc = st.button("🔍 Sorgula (Sadece Sonuç Gösterir)", use_container_width=True, type="primary")
+with col_btn2:
+    btn_pdf_al = st.button("📄 Sorgula (Sonuç + PDF Alır)", use_container_width=True)
+
+pdf_mode = btn_pdf_al
+start_query = btn_sadece_sonuc or btn_pdf_al
 
 
 def extract_tev_result(page):
     """
-    Sayfadan Telafi Edici Vergi degerini okur.
-    Dönen değerler:
-        (değer, True)  → ödeme var
-        (değer, False) → ödeme yok
-        (değer, None)  → kayıt bulunamadı veya hata
+    Sayfadan TEV alanlarını okur.
+    Döner: (gonderen, vergino, tev_degeri, tahsilat_yeri, has_payment)
     """
     try:
+        import re
         page_text = page.inner_text("body")
 
-        # 1a. Odeme yoktur kontrolu
-        if "odeme yoktur" in page_text.lower() or "ödeme yoktur" in page_text.lower():
-            return "Ödeme Yoktur", False
-
-        # 1b. Kayit bulunamadi kontrolu — PDF alınmayacak
+        # Kayıt bulunamadı kontrolü
         if "kayıt bulunamadı" in page_text.lower() or "kayit bulunamadi" in page_text.lower():
-            return "Kayıt Bulunamadı", None
+            return "-", "-", "Kayıt Bulunamadı", "-", None
 
-        # 2. Regex ile satir bazli arama (en guvenilir yontem)
-        import re
+        # Ödeme yoktur kontrolü
+        if "odeme yoktur" in page_text.lower() or "ödeme yoktur" in page_text.lower():
+            return "-", "-", "Ödeme Yoktur", "-", False
+
         lines = [l.strip() for l in page_text.splitlines() if l.strip()]
+
+        def get_value_after_label(label):
+            for i, line in enumerate(lines):
+                if label.lower() in line.lower():
+                    after = line[line.lower().index(label.lower()) + len(label):].strip()
+                    if after and after not in [":", ""]:
+                        return after.lstrip(":").strip()
+                    if i + 1 < len(lines):
+                        return lines[i + 1].strip()
+            return "-"
+
+        gonderen = get_value_after_label("Gönderen")
+        vergino = get_value_after_label("Vergino") or get_value_after_label("Vergi No")
+        tahsilat_yeri = get_value_after_label("Tahsilat Yeri")
+
+        # TEV değeri
+        tev_value = "-"
+        has_payment = None
         for i, line in enumerate(lines):
             if "telafi edici vergi" in line.lower():
-                # Ayni satirda rakam var mi?
-                same_line = re.search(r"[\d.,]+", line.replace(line[:line.lower().index("telafi")], ""))
+                same_line = re.search(r"[\d.,]+", line[line.lower().index("telafi edici vergi") + len("telafi edici vergi"):])
                 if same_line:
-                    return same_line.group(), True
-                # Bir sonraki satira bak
+                    tev_value = same_line.group()
+                    has_payment = True
+                    break
                 if i + 1 < len(lines):
                     next_line = lines[i + 1].strip()
                     if re.match(r"^[\d.,]+$", next_line):
-                        return next_line, True
-                    # Sonraki satirda baska bir sayi varsa al
+                        tev_value = next_line
+                        has_payment = True
+                        break
                     nums = re.findall(r"[\d]{1,}[.,][\d]+", next_line)
                     if nums:
-                        return nums[0], True
+                        tev_value = nums[0]
+                        has_payment = True
+                        break
 
-        # 3. Tablo yapisi varsa kontrol et (th/td)
-        rows = page.query_selector_all("tr")
-        for row in rows:
-            cells = row.query_selector_all("th, td")
-            for i, cell in enumerate(cells):
-                if "telafi edici vergi" in cell.inner_text().lower():
-                    if i + 1 < len(cells):
-                        return cells[i + 1].inner_text().strip(), True
+        # Tablo araması
+        if tev_value == "-":
+            rows = page.query_selector_all("tr")
+            for row in rows:
+                cells = row.query_selector_all("th, td")
+                for i, cell in enumerate(cells):
+                    txt = cell.inner_text().lower()
+                    if "telafi edici vergi" in txt and i + 1 < len(cells):
+                        tev_value = cells[i + 1].inner_text().strip()
+                        has_payment = True if tev_value and tev_value != "-" else None
 
-        # 4. Sayfa kaynaginda label-value pattern ara (div/span)
-        import re
-        all_elements = page.query_selector_all("span, td, div, label, p")
-        for i, el in enumerate(all_elements):
-            if "telafi edici vergi" in el.inner_text().lower():
-                # Kardes veya sonraki element
-                for offset in range(1, 4):
-                    if i + offset < len(all_elements):
-                        candidate = all_elements[i + offset].inner_text().strip()
-                        if re.match(r"^[\d.,]+$", candidate):
-                            return candidate, True
-
-        return "Deger okunamadi", None
+        return gonderen, vergino, tev_value, tahsilat_yeri, has_payment
 
     except Exception as ex:
-        return f"Hata: {str(ex)}", None
+        return "-", "-", f"Hata: {str(ex)}", "-", None
 
 
-if st.button("Sorgulamayi Baslat", type="primary"):
+if start_query:
     tescil_list = [t.strip() for t in raw_data.split('\n') if t.strip()]
 
     if not tescil_list:
-        st.error("Lutfen tescil numarasi girin!")
+        st.error("Lütfen tescil numarası girin!")
     else:
+        # Reset
+        st.session_state.zip_bytes = None
+        st.session_state.merged_pdf_bytes = None
+        st.session_state.query_results = None
+
         progress_bar = st.progress(0)
         status_text = st.empty()
         pdf_results = {}
@@ -118,27 +140,34 @@ if st.button("Sorgulamayi Baslat", type="primary"):
                         page.click("#Btn_Ara")
                         time.sleep(5)
 
-                        tev_value, has_payment = extract_tev_result(page)
+                        gonderen, vergino, tev_value, tahsilat_yeri, has_payment = extract_tev_result(page)
+
                         query_results.append({
-                            "tescil": tescil_no,
-                            "deger": tev_value,
+                            "İhracat Beyannamesi": tescil_no,
+                            "Gönderen": gonderen,
+                            "Vergino": vergino,
+                            "Telafi Edici Vergi": tev_value,
+                            "Tahsilat Yeri": tahsilat_yeri,
                             "odeme_var": has_payment
                         })
 
-                        # Kayıt bulunamadıysa (has_payment is None ve değer "Kayıt Bulunamadı")
-                        # PDF almadan geç
-                        if tev_value == "Kayıt Bulunamadı":
-                            progress_bar.progress((index + 1) / len(tescil_list))
-                            continue
-
-                        page.emulate_media(media="print")
-                        pdf_content = page.pdf(format="A4")
-                        pdf_results[f"{tescil_no}.pdf"] = pdf_content
-                        pdf_list_for_merge.append(pdf_content)
+                        # PDF modu ve kayıt bulunanlar için PDF al
+                        if pdf_mode and tev_value != "Kayıt Bulunamadı":
+                            page.emulate_media(media="print")
+                            pdf_content = page.pdf(format="A4")
+                            pdf_results[f"{tescil_no}.pdf"] = pdf_content
+                            pdf_list_for_merge.append(pdf_content)
 
                     except Exception as e:
-                        st.error(f"{tescil_no} hatasi: {str(e)}")
-                        query_results.append({"tescil": tescil_no, "deger": "Hata", "odeme_var": None})
+                        st.error(f"{tescil_no} hatası: {str(e)}")
+                        query_results.append({
+                            "İhracat Beyannamesi": tescil_no,
+                            "Gönderen": "-",
+                            "Vergino": "-",
+                            "Telafi Edici Vergi": "Hata",
+                            "Tahsilat Yeri": "-",
+                            "odeme_var": None
+                        })
 
                     progress_bar.progress((index + 1) / len(tescil_list))
 
@@ -146,7 +175,7 @@ if st.button("Sorgulamayi Baslat", type="primary"):
 
             st.session_state.query_results = query_results
 
-            if pdf_results:
+            if pdf_mode and pdf_results:
                 zip_buffer = io.BytesIO()
                 with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
                     for filename, content in pdf_results.items():
@@ -161,50 +190,76 @@ if st.button("Sorgulamayi Baslat", type="primary"):
                 st.session_state.merged_pdf_bytes = merged_buffer.getvalue()
                 merger.close()
 
-                st.success("Tum islemler tamamlandi!")
-            else:
-                st.warning("Sonuc alinamadi.")
+            status_text.text("✅ Tüm işlemler tamamlandı!")
+            st.success("Sorgulama tamamlandı!")
 
         except Exception as main_e:
-            st.error(f"Sistem Hatasi: {str(main_e)}")
+            st.error(f"Sistem Hatası: {str(main_e)}")
 
 
-# --- SORGU SONUCLARI ---
+# --- SORGU SONUÇLARI TABLO ---
 if st.session_state.query_results:
     st.markdown("---")
-    st.markdown("### Sorgu Sonuclari")
+    st.markdown("### 📊 Sorgu Sonuçları")
 
-    result_lines = []
+    display_rows = []
     for r in st.session_state.query_results:
-        if r["deger"] == "Kayıt Bulunamadı":
-            icon = "KAYIT BULUNAMADI"
-            label = "Bu beyannameye ilişkin TEV kaydı bulunamadı"
-        elif r["odeme_var"] is False:
-            icon = "ODEME YOKTUR"
-            label = "Odeme Yoktur"
+        tev = r["Telafi Edici Vergi"]
+        if tev == "Kayıt Bulunamadı":
+            durum = "⚪ Kayıt Bulunamadı"
+        elif tev == "Ödeme Yoktur":
+            durum = "✅ Ödeme Yoktur"
         elif r["odeme_var"] is True:
-            icon = "ODEME VAR"
-            label = f"Telafi Edici Vergi: {r['deger']}"
+            durum = "🔴 Ödeme Var"
+        elif tev == "Hata":
+            durum = "❌ Hata"
         else:
-            icon = "HATA"
-            label = r["deger"]
+            durum = "❓ Belirsiz"
 
-        st.markdown(f"**{r['tescil']}** → {icon} | {label}")
-        result_lines.append(f"{r['tescil']}\t{label}")
+        display_rows.append({
+            "İhracat Beyannamesi": r["İhracat Beyannamesi"],
+            "Gönderen": r["Gönderen"],
+            "Vergino": r["Vergino"],
+            "Telafi Edici Vergi": tev,
+            "Tahsilat Yeri": r["Tahsilat Yeri"],
+            "Durum": durum,
+        })
 
-    copy_text = "\n".join(result_lines)
-    st.markdown("**Sonuclari Kopyala:**")
-    st.code(copy_text, language=None)
+    df = pd.DataFrame(display_rows)
+
+    def highlight_row(row):
+        tev = row["Telafi Edici Vergi"]
+        if tev == "Kayıt Bulunamadı":
+            return ["background-color: #f0f0f0; color: #888"] * len(row)
+        elif tev == "Ödeme Yoktur":
+            return ["background-color: #e6f4ea; color: #2e7d32"] * len(row)
+        elif row["Durum"].startswith("🔴"):
+            return ["background-color: #fdecea; color: #c62828"] * len(row)
+        elif tev == "Hata":
+            return ["background-color: #fff8e1; color: #f57f17"] * len(row)
+        return [""] * len(row)
+
+    styled_df = df.style.apply(highlight_row, axis=1)
+    st.dataframe(styled_df, use_container_width=True, hide_index=True)
+
+    # Excel'e kopyalanabilir metin
+    copy_lines = ["İhracat Beyannamesi\tGönderen\tVergino\tTelafi Edici Vergi\tTahsilat Yeri"]
+    for r in display_rows:
+        copy_lines.append(
+            f"{r['İhracat Beyannamesi']}\t{r['Gönderen']}\t{r['Vergino']}\t{r['Telafi Edici Vergi']}\t{r['Tahsilat Yeri']}"
+        )
+    st.markdown("**Sonuçları Kopyala (Excel'e yapıştırılabilir):**")
+    st.code("\n".join(copy_lines), language=None)
 
 
-# --- INDIRME SECENEKLERI ---
+# --- İNDİRME SEÇENEKLERİ (sadece PDF modunda) ---
 if st.session_state.zip_bytes or st.session_state.merged_pdf_bytes:
-    st.markdown("### Sonuclari Indir")
+    st.markdown("### 📥 PDF İndir")
     col1, col2 = st.columns(2)
     with col1:
         if st.session_state.merged_pdf_bytes:
             st.download_button(
-                label="Birlestirilmis Tek PDF Indir",
+                label="Birleştirilmiş Tek PDF İndir",
                 data=st.session_state.merged_pdf_bytes,
                 file_name="Tev_Tum_Sorgular_Birlestirilmis.pdf",
                 mime="application/pdf",
@@ -213,7 +268,7 @@ if st.session_state.zip_bytes or st.session_state.merged_pdf_bytes:
     with col2:
         if st.session_state.zip_bytes:
             st.download_button(
-                label="PDF'leri Ayri Ayri Indir (ZIP)",
+                label="PDF'leri Ayrı Ayrı İndir (ZIP)",
                 data=st.session_state.zip_bytes,
                 file_name="Tev_Sorgu_Arsivi.zip",
                 mime="application/zip",
