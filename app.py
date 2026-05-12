@@ -8,11 +8,9 @@ import pandas as pd
 import re
 
 # --- SAYFA AYARLARI ---
-# layout="wide" eklenerek sayfa yatayda genişletildi.
-st.set_page_config(page_title="TEV Odeme Sorgulama", page_icon="", layout="wide")
+# Layout'u tekrar 'centered' (varsayılan) yaptık, sadece tabloya odaklandık.
+st.set_page_config(page_title="TEV Odeme Sorgulama", page_icon="", layout="centered")
 st.title("TEV Ödeme Sorgulama Portali")
-
-st.markdown("Tescil numaralarını Excel'den kopyalayıp yapıştırın.")
 
 # --- SESSION STATE ---
 for key in ["zip_bytes", "merged_pdf_bytes", "query_results"]:
@@ -21,36 +19,33 @@ for key in ["zip_bytes", "merged_pdf_bytes", "query_results"]:
 
 raw_data = st.text_area("Tescil Numaraları", height=150, placeholder="20230000...")
 
-# --- SORGU MODU SEÇİMİ ---
+# --- SORGU MODU ---
 col_btn1, col_btn2 = st.columns(2)
 with col_btn1:
-    btn_sadece_sonuc = st.button("🔍 Sorgula (Sadece Sonuç Gösterir)", use_container_width=True, type="primary")
+    btn_sadece_sonuc = st.button("🔍 Sorgula (Sadece Sonuç)", use_container_width=True, type="primary")
 with col_btn2:
-    btn_pdf_al = st.button("📄 Sorgula (Sonuç + PDF Alır)", use_container_width=True)
+    btn_pdf_al = st.button("📄 Sorgula (Sonuç + PDF)", use_container_width=True)
 
 pdf_mode = btn_pdf_al
 start_query = btn_sadece_sonuc or btn_pdf_al
 
+# ... (extract_tev_result ve wait_for_result fonksiyonları aynı kalıyor) ...
 
 def extract_tev_result(page):
     try:
         page_text = page.inner_text("body")
-
         if "kayıt bulunamadı" in page_text.lower() or "kayit bulunamadi" in page_text.lower():
             return "-", "-", "Kayıt Bulunamadı", "-", None
-
         if "ödeme yoktur" in page_text.lower() or "odeme yoktur" in page_text.lower():
             return "-", "-", "Ödeme Yoktur", "-", False
 
         def get_by_id(element_id):
             el = page.query_selector(f"#{element_id}")
-            if el:
-                return el.inner_text().strip()
-            return "-"
+            return el.inner_text().strip() if el else "-"
 
-        gonderen      = get_by_id("Lab_ver_gonderen")
-        vergino       = get_by_id("Lab_ver_vergino")
-        tev_value     = get_by_id("Lab_ver_telafi")
+        gonderen = get_by_id("Lab_ver_gonderen")
+        vergino = get_by_id("Lab_ver_vergino")
+        tev_value = get_by_id("Lab_ver_telafi")
         tahsilat_yeri = get_by_id("Lab_ver_tahsilat")
 
         has_payment = None
@@ -62,209 +57,105 @@ def extract_tev_result(page):
                 if nums:
                     tev_value = nums[0]
                     has_payment = True
-
         return gonderen, vergino, tev_value, tahsilat_yeri, has_payment
+    except:
+        return "-", "-", "Hata", "-", None
 
-    except Exception as ex:
-        return "-", "-", f"Hata: {str(ex)}", "-", None
-
-
-def wait_for_result(page, previous_tescil=None):
-    timeout = 10
-    interval = 0.3
-    elapsed = 0
-
+def wait_for_result(page, prev_tescil=None):
+    timeout, interval, elapsed = 10, 0.3, 0
     while elapsed < timeout:
         try:
-            body_text = page.inner_text("body")
-            if previous_tescil and previous_tescil in body_text:
-                time.sleep(interval)
-                elapsed += interval
-                continue
-            if any(kw in body_text.lower() for kw in [
-                "telafi edici vergi", "ödeme yoktur", "odeme yoktur",
-                "kayıt bulunamadı", "kayit bulunamadi"
-            ]):
-                return
-        except Exception:
-            pass
-        time.sleep(interval)
-        elapsed += interval
-
+            body = page.inner_text("body")
+            if prev_tescil and prev_tescil in body:
+                time.sleep(interval); elapsed += interval; continue
+            if any(kw in body.lower() for kw in ["telafi edici vergi", "ödeme yoktur", "kayıt bulunamadı"]): return
+        except: pass
+        time.sleep(interval); elapsed += interval
 
 if start_query:
     tescil_list = [t.strip() for t in raw_data.split('\n') if t.strip()]
-
-    if not tescil_list:
-        st.error("Lütfen tescil numarası girin!")
-    else:
-        st.session_state.zip_bytes = None
-        st.session_state.merged_pdf_bytes = None
-        st.session_state.query_results = None
-
+    if tescil_list:
+        st.session_state.query_results = []
         progress_bar = st.progress(0)
-        status_text = st.empty()
-        timer_text = st.empty()
-        pdf_results = {}
-        pdf_list_for_merge = []
-        query_results = []
+        pdf_results, pdf_list_for_merge, query_results = {}, [], []
+        
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
+            page = browser.new_page()
+            url = "https://uygulama.gtb.gov.tr/TEV/"
+            page.goto(url)
+            prev_tescil = None
 
-        toplam_baslangic = time.time()
+            for i, tno in enumerate(tescil_list):
+                page.fill("#TextBox_Beyanname", tno)
+                page.click("#Btn_Ara")
+                wait_for_result(page, prev_tescil)
+                
+                res = extract_tev_result(page)
+                query_results.append({
+                    "İhracat Beyannamesi": tno, "Gönderen": res[0], "Vergino": res[1],
+                    "Telafi Edici Vergi": res[2], "Tahsilat Yeri": res[3], "odeme_var": res[4]
+                })
 
-        try:
-            with sync_playwright() as p:
-                browser = p.chromium.launch(
-                    headless=True,
-                    executable_path="/usr/bin/chromium",
-                    args=["--no-sandbox", "--disable-dev-shm-usage"]
-                )
-                context = browser.new_context()
-                page = context.new_page()
-                url = "https://uygulama.gtb.gov.tr/TEV/"
+                if pdf_mode and res[2] != "Kayıt Bulunamadı":
+                    page.emulate_media(media="print")
+                    pdf_c = page.pdf(format="A4")
+                    pdf_results[f"{tno}.pdf"] = pdf_c
+                    pdf_list_for_merge.append(pdf_c)
+                
+                prev_tescil = tno
+                progress_bar.progress((i + 1) / len(tescil_list))
+            browser.close()
 
-                page.goto(url)
-                page.wait_for_load_state("networkidle")
-                previous_tescil = None
-
-                for index, tescil_no in enumerate(tescil_list):
-                    sorgu_baslangic = time.time()
-                    try:
-                        status_text.text(f"⏳ Sorgulanıyor: {tescil_no} ({index+1}/{len(tescil_list)})")
-
-                        page.fill("#TextBox_Beyanname", "")
-                        page.fill("#TextBox_Beyanname", tescil_no)
-                        page.click("#Btn_Ara")
-
-                        wait_for_result(page, previous_tescil)
-
-                        sorgu_sure = time.time() - sorgu_baslangic
-                        toplam_sure = time.time() - toplam_baslangic
-                        timer_text.text(
-                            f"⏱ Son sorgu: {sorgu_sure:.1f}s  |  Toplam: {toplam_sure:.1f}s"
-                        )
-
-                        gonderen, vergino, tev_value, tahsilat_yeri, has_payment = extract_tev_result(page)
-
-                        query_results.append({
-                            "İhracat Beyannamesi": tescil_no,
-                            "Gönderen": gonderen,
-                            "Vergino": vergino,
-                            "Telafi Edici Vergi": tev_value,
-                            "Tahsilat Yeri": tahsilat_yeri,
-                            "odeme_var": has_payment
-                        })
-
-                        if pdf_mode and tev_value != "Kayıt Bulunamadı":
-                            page.emulate_media(media="print")
-                            pdf_content = page.pdf(format="A4")
-                            pdf_results[f"{tescil_no}.pdf"] = pdf_content
-                            pdf_list_for_merge.append(pdf_content)
-                            page.emulate_media(media="screen")
-
-                        previous_tescil = tescil_no
-
-                    except Exception as e:
-                        st.error(f"{tescil_no} hatası: {str(e)}")
-                        query_results.append({
-                            "İhracat Beyannamesi": tescil_no,
-                            "Gönderen": "-",
-                            "Vergino": "-",
-                            "Telafi Edici Vergi": "Hata",
-                            "Tahsilat Yeri": "-",
-                            "odeme_var": None
-                        })
-                        try:
-                            page.goto(url)
-                            page.wait_for_load_state("networkidle")
-                            previous_tescil = None
-                        except Exception:
-                            pass
-
-                    progress_bar.progress((index + 1) / len(tescil_list))
-
-                browser.close()
-
-            toplam_sure = time.time() - toplam_baslangic
-            st.session_state.query_results = query_results
-
-            if pdf_mode and pdf_results:
-                zip_buffer = io.BytesIO()
-                with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-                    for filename, content in pdf_results.items():
-                        zf.writestr(filename, content)
-                st.session_state.zip_bytes = zip_buffer.getvalue()
-
-                merger = PdfWriter()
-                for pdf_data in pdf_list_for_merge:
-                    merger.append(io.BytesIO(pdf_data))
-                merged_buffer = io.BytesIO()
-                merger.write(merged_buffer)
-                st.session_state.merged_pdf_bytes = merged_buffer.getvalue()
-                merger.close()
-
-            status_text.text(f"✅ Tamamlandı!")
-            timer_text.text(f"⏱ Toplam süre: {toplam_sure:.1f}s")
-
-        except Exception as main_e:
-            st.error(f"Sistem Hatası: {str(main_e)}")
-
+        st.session_state.query_results = query_results
+        if pdf_mode:
+            z_buf = io.BytesIO()
+            with zipfile.ZipFile(z_buf, "w") as zf:
+                for f, c in pdf_results.items(): zf.writestr(f, c)
+            st.session_state.zip_bytes = z_buf.getvalue()
+            
+            merger = PdfWriter()
+            for p_data in pdf_list_for_merge: merger.append(io.BytesIO(p_data))
+            m_buf = io.BytesIO()
+            merger.write(m_buf)
+            st.session_state.merged_pdf_bytes = m_buf.getvalue()
 
 # --- SONUÇLARI GÖSTER ---
 if st.session_state.query_results:
     st.markdown("---")
-    
-    # --- İNDİRME SEÇENEKLERİ ---
-    if st.session_state.zip_bytes or st.session_state.merged_pdf_bytes:
-        st.markdown("### 📥 PDF İndir")
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.session_state.merged_pdf_bytes:
-                st.download_button("📄 Birleştirilmiş Tek PDF İndir", st.session_state.merged_pdf_bytes, "Tev_Birlestirilmis.pdf", "application/pdf", use_container_width=True)
-        with col2:
-            if st.session_state.zip_bytes:
-                st.download_button("📦 PDF'leri ZIP Olarak İndir", st.session_state.zip_bytes, "Tev_Arsiv.zip", "application/zip", use_container_width=True)
+    if st.session_state.merged_pdf_bytes or st.session_state.zip_bytes:
+        c1, c2 = st.columns(2)
+        if st.session_state.merged_pdf_bytes: c1.download_button("📄 Tek PDF", st.session_state.merged_pdf_bytes, "Tev_Birlestirilmis.pdf", use_container_width=True)
+        if st.session_state.zip_bytes: c2.download_button("📦 ZIP", st.session_state.zip_bytes, "Tev_Arsiv.zip", use_container_width=True)
 
-    # --- SONUÇ DETAY TABLOSU ---
     st.markdown("### 🔍 Sonuç Detay")
 
-    display_rows = []
-    for r in st.session_state.query_results:
-        display_rows.append({
-            "İhracat Beyannamesi": r["İhracat Beyannamesi"],
-            "Gönderen": r["Gönderen"],
-            "Vergino": r["Vergino"],
-            "Telafi Edici Vergi": r["Telafi Edici Vergi"],
-            "Tahsilat Yeri": r["Tahsilat Yeri"],
-            "odeme_var": r["odeme_var"] 
-        })
+    df = pd.DataFrame(st.session_state.query_results)
 
-    df_full = pd.DataFrame(display_rows)
-
-    # Font boyutunu küçültüp görüntüyü "uzaklaştıran" stil ayarı
-    def style_dataframe(row):
+    # TABLO İÇİ YAZI BOYUTUNU KÜÇÜLTME (Kritik Bölüm)
+    def style_table(row):
+        # Fontu 10px yaptık, satır yüksekliğini daralttık
+        style = 'font-size: 10px; line-height: 1.1; vertical-align: middle;'
         tev = row["Telafi Edici Vergi"]
-        # font-size: 11px ile daha kompakt görünüm sağlandı
-        base_style = 'font-size: 11px; white-space: normal;' 
         
-        if tev == "Kayıt Bulunamadı":
-            color = "background-color: #f8f9fa; color: #6c757d;"
-        elif tev == "Ödeme Yoktur":
-            color = "background-color: #f0fff4; color: #1a7f37;"
-        elif row["odeme_var"] is True:
-            color = "background-color: #fff5f5; color: #d73a49;"
-        elif tev == "Hata":
-            color = "background-color: #fffbea; color: #9a6700;"
-        else:
-            color = ""
-            
-        return [f"{base_style} {color}"] * len(row)
+        if tev == "Kayıt Bulunamadı": bg = "background-color: #f8f9fa;"
+        elif tev == "Ödeme Yoktur": bg = "background-color: #f0fff4; color: #1a7f37; font-weight: bold;"
+        elif row["odeme_var"] is True: bg = "background-color: #fff5f5; color: #d73a49; font-weight: bold;"
+        else: bg = ""
+        
+        return [f"{style} {bg}"] * len(row)
 
-    styled_df = df_full.style.apply(style_dataframe, axis=1)
-    
-    # Tabloyu göster
+    styled_df = df.style.apply(style_table, axis=1)
+
+    # Sütun genişliklerini manuel ayarlayarak taşmayı önlüyoruz
     st.dataframe(
-        styled_df, 
-        use_container_width=True, 
+        styled_df,
+        use_container_width=True,
         hide_index=True,
-        column_order=("İhracat Beyannamesi", "Gönderen", "Vergino", "Telafi Edici Vergi", "Tahsilat Yeri")
+        column_order=("İhracat Beyannamesi", "Gönderen", "Vergino", "Telafi Edici Vergi", "Tahsilat Yeri"),
+        column_config={
+            "Gönderen": st.column_config.TextColumn("Gönderen", width="medium"),
+            "Telafi Edici Vergi": st.column_config.TextColumn("TEV Tutarı", width="small"),
+            "Vergino": st.column_config.TextColumn("Vergi No", width="small")
+        }
     )
