@@ -211,56 +211,10 @@ if start_query:
             st.error(f"Sistem Hatası: {str(main_e)}")
 
 
-# --- SONUÇLARI GÖSTER ---
+# --- SORGU SONUÇLARI TABLO ---
 if st.session_state.query_results:
     st.markdown("---")
-    
-    # --- ÜSTTEKİ TABLO: SONUCU KOPYALA ---
-    st.markdown("### 📋 Sonucu Kopyala")
-    
-    tev_only_data = []
-    for r in st.session_state.query_results:
-        val = r["Telafi Edici Vergi"]
-        if val in ["Kayıt Bulunamadı", "Ödeme Yoktur", "Hata", "-"]:
-            tev_only_data.append("")
-        else:
-            tev_only_data.append(val)
-            
-    df_tev = pd.DataFrame({"Telafi Edici Vergi": tev_only_data})
-    
-    # Buton ve Tablo
-    st.dataframe(df_tev, use_container_width=True, hide_index=True)
-    
-    # Panoya kopyalamak için veri (başlık hariç)
-    copy_text = "\n".join([str(x) for x in tev_only_data])
-    st.copy_button(label="📋 Veriyi Kopyala", data=copy_text, use_container_width=True)
-
-    # --- İNDİRME SEÇENEKLERİ ---
-    if st.session_state.zip_bytes or st.session_state.merged_pdf_bytes:
-        st.markdown("### 📥 PDF İndir")
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.session_state.merged_pdf_bytes:
-                st.download_button(
-                    label="Birleştirilmiş Tek PDF İndir",
-                    data=st.session_state.merged_pdf_bytes,
-                    file_name="Tev_Tum_Sorgular_Birlestirilmis.pdf",
-                    mime="application/pdf",
-                    use_container_width=True
-                )
-        with col2:
-            if st.session_state.zip_bytes:
-                st.download_button(
-                    label="PDF'leri Ayrı Ayrı İndir (ZIP)",
-                    data=st.session_state.zip_bytes,
-                    file_name="Tev_Sorgu_Arsivi.zip",
-                    mime="application/zip",
-                    use_container_width=True
-                )
-
-    # --- EN ALTTAKİ TABLO: SONUÇ DETAY ---
-    st.markdown("---")
-    st.markdown("### 🔍 Sonuç Detay")
+    st.markdown("### 📊 Sorgu Sonuçları")
 
     display_rows = []
     for r in st.session_state.query_results:
@@ -285,7 +239,7 @@ if st.session_state.query_results:
             "Durum": durum,
         })
 
-    df_full = pd.DataFrame(display_rows)
+    df = pd.DataFrame(display_rows)
 
     def highlight_row(row):
         tev = row["Telafi Edici Vergi"]
@@ -299,5 +253,48 @@ if st.session_state.query_results:
             return ["background-color: #fff8e1; color: #f57f17"] * len(row)
         return [""] * len(row)
 
-    styled_df = df_full.style.apply(highlight_row, axis=1)
+    styled_df = df.style.apply(highlight_row, axis=1)
     st.dataframe(styled_df, use_container_width=True, hide_index=True)
+
+    # --- ÖZEL İSTENEN BÖLÜM: TEV TABLOSU ---
+    st.markdown("---")
+    st.markdown("**Telafi Edici Vergi Değerleri (Excel'e yapıştırılabilir):**")
+    
+    # Sadece TEV sütununu içeren tablo (Metinsel ifadeler yerine temiz boşluk bırakır)
+    tev_only_data = []
+    for r in display_rows:
+        val = r["Telafi Edici Vergi"]
+        # Eğer sonuç bir tutar değilse (Kayıt yoksa vb.) boş göster ki Excel'de hücre kalsın
+        if val in ["Kayıt Bulunamadı", "Ödeme Yoktur", "Hata", "-"]:
+            tev_only_data.append("")
+        else:
+            tev_only_data.append(val)
+            
+    df_tev = pd.DataFrame({"Telafi Edici Vergi": tev_only_data})
+    
+    # Üstteki tablo gibi kenarlıklı ve profesyonel dursun diye dataframe olarak basıyoruz
+    st.dataframe(df_tev, use_container_width=True, hide_index=True)
+
+
+# --- İNDİRME SEÇENEKLERİ ---
+if st.session_state.zip_bytes or st.session_state.merged_pdf_bytes:
+    st.markdown("### 📥 PDF İndir")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.session_state.merged_pdf_bytes:
+            st.download_button(
+                label="Birleştirilmiş Tek PDF İndir",
+                data=st.session_state.merged_pdf_bytes,
+                file_name="Tev_Tum_Sorgular_Birlestirilmis.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
+    with col2:
+        if st.session_state.zip_bytes:
+            st.download_button(
+                label="PDF'leri Ayrı Ayrı İndir (ZIP)",
+                data=st.session_state.zip_bytes,
+                file_name="Tev_Sorgu_Arsivi.zip",
+                mime="application/zip",
+                use_container_width=True
+            )
