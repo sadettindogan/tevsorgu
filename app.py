@@ -227,19 +227,13 @@ if st.session_state.query_results:
             tev_only_data.append(val)
             
     df_tev = pd.DataFrame({"Telafi Edici Vergi": tev_only_data})
-    
-    # Veri Tablosu
     st.dataframe(df_tev, use_container_width=True, hide_index=True)
 
-    # Veriyi kopyalamak için string oluştur (Başlık hariç, alt alta)
     copy_text = "\n".join([str(x) for x in tev_only_data])
     
-    # Tablonun hemen altına kopyalama butonu (st.code yerine st.button mantığıyla çalışan güvenli sürüm)
-    # Eğer sürüm desteklemiyorsa st.code kopyalaması için alternatif olarak kalabilir
     try:
         st.copy_button(label="📋 Sonucu Kopyala", data=copy_text, use_container_width=True)
     except Exception:
-        st.info("Kopyalamak için aşağıdaki alanı kullanabilirsiniz:")
         st.code(copy_text, language=None)
 
     # --- İNDİRME SEÇENEKLERİ ---
@@ -248,63 +242,52 @@ if st.session_state.query_results:
         col1, col2 = st.columns(2)
         with col1:
             if st.session_state.merged_pdf_bytes:
-                st.download_button(
-                    label="Birleştirilmiş Tek PDF İndir",
-                    data=st.session_state.merged_pdf_bytes,
-                    file_name="Tev_Tum_Sorgular_Birlestirilmis.pdf",
-                    mime="application/pdf",
-                    use_container_width=True
-                )
+                st.download_button("Birleştirilmiş Tek PDF İndir", st.session_state.merged_pdf_bytes, "Tev_Birlestirilmis.pdf", "application/pdf", use_container_width=True)
         with col2:
             if st.session_state.zip_bytes:
-                st.download_button(
-                    label="PDF'leri Ayrı Ayrı İndir (ZIP)",
-                    data=st.session_state.zip_bytes,
-                    file_name="Tev_Sorgu_Arsivi.zip",
-                    mime="application/zip",
-                    use_container_width=True
-                )
+                st.download_button("PDF'leri Ayrı Ayrı İndir (ZIP)", st.session_state.zip_bytes, "Tev_Arsiv.zip", "application/zip", use_container_width=True)
 
     # --- EN ALTTAKİ TABLO: SONUÇ DETAY ---
     st.markdown("---")
     st.markdown("### 🔍 Sonuç Detay")
 
+    # Sadece gerekli sütunları alıyoruz (Durum silindi)
     display_rows = []
     for r in st.session_state.query_results:
-        tev = r["Telafi Edici Vergi"]
-        if tev == "Kayıt Bulunamadı":
-            durum = "⚪ Kayıt Bulunamadı"
-        elif tev == "Ödeme Yoktur":
-            durum = "✅ Ödeme Yoktur"
-        elif r["odeme_var"] is True:
-            durum = "🔴 Ödeme Var"
-        elif tev == "Hata":
-            durum = "❌ Hata"
-        else:
-            durum = "❓ Belirsiz"
-
         display_rows.append({
             "İhracat Beyannamesi": r["İhracat Beyannamesi"],
             "Gönderen": r["Gönderen"],
             "Vergino": r["Vergino"],
-            "Telafi Edici Vergi": tev,
+            "Telafi Edici Vergi": r["Telafi Edici Vergi"],
             "Tahsilat Yeri": r["Tahsilat Yeri"],
-            "Durum": durum,
+            "odeme_var": r["odeme_var"] # Renklendirme mantığı için saklıyoruz ama tabloda gizleyeceğiz
         })
 
     df_full = pd.DataFrame(display_rows)
 
-    def highlight_row(row):
+    # Renklendirme ve Font Boyutu Ayarı
+    def style_dataframe(row):
         tev = row["Telafi Edici Vergi"]
+        base_style = 'font-size: 12px; white-space: normal;' # Yazıyı küçült ve sığmazsa aşağı kaydır
+        
         if tev == "Kayıt Bulunamadı":
-            return ["background-color: #f0f0f0; color: #888"] * len(row)
+            color = "background-color: #f0f0f0; color: #888;"
         elif tev == "Ödeme Yoktur":
-            return ["background-color: #e6f4ea; color: #2e7d32"] * len(row)
-        elif row["Durum"].startswith("🔴"):
-            return ["background-color: #fdecea; color: #c62828"] * len(row)
+            color = "background-color: #e6f4ea; color: #2e7d32;"
+        elif row["odeme_var"] is True:
+            color = "background-color: #fdecea; color: #c62828;"
         elif tev == "Hata":
-            return ["background-color: #fff8e1; color: #f57f17"] * len(row)
-        return [""] * len(row)
+            color = "background-color: #fff8e1; color: #f57f17;"
+        else:
+            color = ""
+            
+        return [f"{base_style} {color}"] * len(row)
 
-    styled_df = df_full.style.apply(highlight_row, axis=1)
-    st.dataframe(styled_df, use_container_width=True, hide_index=True)
+    # Tabloyu gösterirken 'odeme_var' sütununu gizliyoruz
+    styled_df = df_full.style.apply(style_dataframe, axis=1)
+    st.dataframe(
+        styled_df, 
+        use_container_width=True, 
+        hide_index=True,
+        column_order=("İhracat Beyannamesi", "Gönderen", "Vergino", "Telafi Edici Vergi", "Tahsilat Yeri")
+    )
