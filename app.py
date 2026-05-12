@@ -215,28 +215,7 @@ if start_query:
 if st.session_state.query_results:
     st.markdown("---")
     
-    # --- ÜSTTEKİ TABLO: TEV DEĞERLERİ ---
-    st.markdown("### 📋 Telafi Edici Vergi Değerleri (Excel'e yapıştırılabilir)")
-    
-    tev_only_data = []
-    for r in st.session_state.query_results:
-        val = r["Telafi Edici Vergi"]
-        if val in ["Kayıt Bulunamadı", "Ödeme Yoktur", "Hata", "-"]:
-            tev_only_data.append("")
-        else:
-            tev_only_data.append(val)
-            
-    df_tev = pd.DataFrame({"Telafi Edici Vergi": tev_only_data})
-    st.dataframe(df_tev, use_container_width=True, hide_index=True)
-
-    copy_text = "\n".join([str(x) for x in tev_only_data])
-    
-    try:
-        st.copy_button(label="📋 Sonucu Kopyala", data=copy_text, use_container_width=True)
-    except Exception:
-        st.code(copy_text, language=None)
-
-    # --- İNDİRME SEÇENEKLERİ ---
+    # --- İNDİRME SEÇENEKLERİ (ÖNE ALINDI) ---
     if st.session_state.zip_bytes or st.session_state.merged_pdf_bytes:
         st.markdown("### 📥 PDF İndir")
         col1, col2 = st.columns(2)
@@ -247,11 +226,9 @@ if st.session_state.query_results:
             if st.session_state.zip_bytes:
                 st.download_button("PDF'leri Ayrı Ayrı İndir (ZIP)", st.session_state.zip_bytes, "Tev_Arsiv.zip", "application/zip", use_container_width=True)
 
-    # --- EN ALTTAKİ TABLO: SONUÇ DETAY ---
-    st.markdown("---")
+    # --- SONUÇ DETAY TABLOSU ---
     st.markdown("### 🔍 Sonuç Detay")
 
-    # Sadece gerekli sütunları alıyoruz (Durum silindi)
     display_rows = []
     for r in st.session_state.query_results:
         display_rows.append({
@@ -260,15 +237,14 @@ if st.session_state.query_results:
             "Vergino": r["Vergino"],
             "Telafi Edici Vergi": r["Telafi Edici Vergi"],
             "Tahsilat Yeri": r["Tahsilat Yeri"],
-            "odeme_var": r["odeme_var"] # Renklendirme mantığı için saklıyoruz ama tabloda gizleyeceğiz
+            "odeme_var": r["odeme_var"] 
         })
 
     df_full = pd.DataFrame(display_rows)
 
-    # Renklendirme ve Font Boyutu Ayarı
     def style_dataframe(row):
         tev = row["Telafi Edici Vergi"]
-        base_style = 'font-size: 12px; white-space: normal;' # Yazıyı küçült ve sığmazsa aşağı kaydır
+        base_style = 'font-size: 12px; white-space: normal;' 
         
         if tev == "Kayıt Bulunamadı":
             color = "background-color: #f0f0f0; color: #888;"
@@ -283,7 +259,6 @@ if st.session_state.query_results:
             
         return [f"{base_style} {color}"] * len(row)
 
-    # Tabloyu gösterirken 'odeme_var' sütununu gizliyoruz
     styled_df = df_full.style.apply(style_dataframe, axis=1)
     st.dataframe(
         styled_df, 
