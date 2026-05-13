@@ -21,7 +21,7 @@ for key in ["zip_bytes", "merged_pdf_bytes", "query_results"]:
 raw_data = st.text_area("Tescil Numaraları", height=200, placeholder="20230000...")
 
 # --- SORGU MODU SEÇİMİ ---
-btn_pdf_al = st.button("📄 Sorgula (Sonuç + PDF Alır)", use_container_width=True)
+btn_pdf_al = st.button("📄 Başla", use_container_width=True)
 
 pdf_mode = btn_pdf_al
 start_query = btn_pdf_al
