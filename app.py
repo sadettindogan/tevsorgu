@@ -262,9 +262,12 @@ if st.session_state.query_results:
     st.dataframe(styled_df, use_container_width=True, hide_index=True)
 
     # --- SONUCU KOPYALA BUTONU ---
-    # TEV boşsa boş satır, doluysa değer — sıra korunur
-    tev_lines = [r["Telafi Edici Vergi"] for r in st.session_state.query_results]
-    tev_text = "\n".join(tev_lines)
+    # İhracat Beyannamesi + TEV — tab ile ayrılır, Excel'e yapıştırılabilir
+    copy_lines = [
+        f"{r['İhracat Beyannamesi']}\t{r['Telafi Edici Vergi']}"
+        for r in st.session_state.query_results
+    ]
+    tev_text = "\n".join(copy_lines)
 
     kopyala_html = f"""
     <textarea id="tev_data" style="position:absolute;left:-9999px;">{tev_text}</textarea>
