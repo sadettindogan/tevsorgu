@@ -21,14 +21,10 @@ for key in ["zip_bytes", "merged_pdf_bytes", "query_results"]:
 raw_data = st.text_area("Tescil Numaraları", height=200, placeholder="20230000...")
 
 # --- SORGU MODU SEÇİMİ ---
-col_btn1, col_btn2 = st.columns(2)
-with col_btn1:
-    btn_sadece_sonuc = st.button("🔍 Sorgula (Sadece Sonuç Gösterir)", use_container_width=True, type="primary")
-with col_btn2:
-    btn_pdf_al = st.button("📄 Sorgula (Sonuç + PDF Alır)", use_container_width=True)
+btn_pdf_al = st.button("📄 Sorgula (Sonuç + PDF Alır)", use_container_width=True)
 
 pdf_mode = btn_pdf_al
-start_query = btn_sadece_sonuc or btn_pdf_al
+start_query = btn_pdf_al
 
 
 def extract_tev_result(page):
