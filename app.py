@@ -249,12 +249,11 @@ if st.session_state.query_results:
         })
 
     def highlight_row(row):
-        if row["Durum"].startswith("✅"):
-            return ["background-color: #e6f4ea; color: #2e7d32"] * len(row)
-        elif row["Durum"].startswith("🔴"):
+        tev = row["Telafi Edici Vergi"]
+        if tev and tev not in ("-", "", "Hata"):
             return ["background-color: #fdecea; color: #c62828"] * len(row)
-        elif row["Durum"].startswith("❌"):
-            return ["background-color: #fff8e1; color: #f57f17"] * len(row)
+        elif not tev or tev == "":
+            return ["background-color: #e6f4ea; color: #2e7d32"] * len(row)
         return [""] * len(row)
 
     # --- KISA TABLO: sadece İhracat Beyannamesi + Telafi Edici Vergi ---
