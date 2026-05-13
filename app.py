@@ -21,7 +21,22 @@ for key in ["zip_bytes", "merged_pdf_bytes", "query_results"]:
 raw_data = st.text_area("Tescil Numaraları", height=200, placeholder="20230000...")
 
 # --- SORGU MODU SEÇİMİ ---
-btn_pdf_al = st.button("📄 Başla", use_container_width=True)
+st.markdown("""
+<style>
+div.stButton > button {
+    background-color: transparent !important;
+    border: 1px solid #ccc !important;
+    color: #2e7d32 !important;
+    font-size: 14px !important;
+    padding: 6px 16px !important;
+}
+div.stButton > button:hover {
+    border-color: #2e7d32 !important;
+    color: #2e7d32 !important;
+}
+</style>
+""", unsafe_allow_html=True)
+btn_pdf_al = st.button("📄 Sorgula")
 
 pdf_mode = btn_pdf_al
 start_query = btn_pdf_al
@@ -220,7 +235,6 @@ if start_query:
 # --- SORGU SONUÇLARI TABLO ---
 if st.session_state.query_results:
     st.markdown("---")
-    st.markdown("### 📊 Sonuç")
 
     display_rows = []
     for r in st.session_state.query_results:
@@ -285,14 +299,14 @@ if st.session_state.query_results:
         this.innerText = '✅ Kopyalandı!';
         setTimeout(() => this.innerText = '📋 Sonucu Kopyala', 2000);
     " style="
-        background-color: #1f77b4;
-        color: white;
-        border: none;
-        padding: 10px 24px;
-        font-size: 15px;
+        background-color: transparent;
+        color: #2e7d32;
+        border: 1px solid #ccc;
+        padding: 6px 16px;
+        font-size: 14px;
         border-radius: 6px;
         cursor: pointer;
-        margin-top: 10px;
+        margin-top: 4px;
     ">📋 Sonucu Kopyala</button>
     """
     st.components.v1.html(kopyala_html, height=60)
