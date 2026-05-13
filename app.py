@@ -261,16 +261,14 @@ if st.session_state.query_results:
     kisa_df = pd.DataFrame([{
         "İhracat Beyannamesi": r["İhracat Beyannamesi"],
         "Telafi Edici Vergi": r["Telafi Edici Vergi"],
-        "Durum": r["Durum"],
     } for r in display_rows])
 
     def highlight_kisa(row):
-        if row["Durum"].startswith("✅"):
-            return ["background-color: #e6f4ea; color: #2e7d32"] * len(row)
-        elif row["Durum"].startswith("🔴"):
+        tev = row["Telafi Edici Vergi"]
+        if tev and tev not in ("-", "", "Hata"):
             return ["background-color: #fdecea; color: #c62828"] * len(row)
-        elif row["Durum"].startswith("❌"):
-            return ["background-color: #fff8e1; color: #f57f17"] * len(row)
+        elif not tev or tev == "":
+            return ["background-color: #e6f4ea; color: #2e7d32"] * len(row)
         return [""] * len(row)
 
     styled_kisa = kisa_df.style.apply(highlight_kisa, axis=1)
@@ -305,8 +303,10 @@ if st.session_state.query_results:
     st.components.v1.html(kopyala_html, height=60)
 
     # --- DETAYLI SONUÇ ---
-    if st.button("📋 Detaylı Sonuç", use_container_width=True):
-        st.session_state["detay_acik"] = not st.session_state.get("detay_acik", False)
+    col_detay, _ = st.columns([1, 3])
+    with col_detay:
+        if st.button("📋 Detaylı Sonuç", use_container_width=False):
+            st.session_state["detay_acik"] = not st.session_state.get("detay_acik", False)
 
     if st.session_state.get("detay_acik", False):
         tam_df = pd.DataFrame([{
@@ -315,7 +315,6 @@ if st.session_state.query_results:
             "Vergino": r["Vergino"],
             "Telafi Edici Vergi": r["Telafi Edici Vergi"],
             "Tahsilat Yeri": r["Tahsilat Yeri"],
-            "Durum": r["Durum"],
         } for r in display_rows])
         styled_tam = tam_df.style.apply(highlight_row, axis=1)
         st.dataframe(styled_tam, use_container_width=True, hide_index=True)
