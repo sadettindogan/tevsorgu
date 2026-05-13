@@ -33,14 +33,6 @@ start_query = btn_sadece_sonuc or btn_pdf_al
 
 def extract_tev_result(page):
     try:
-        page_text = page.inner_text("body")
-
-        if "kayıt bulunamadı" in page_text.lower() or "kayit bulunamadi" in page_text.lower():
-            return "-", "-", "Kayıt Bulunamadı", "-", None
-
-        if "ödeme yoktur" in page_text.lower() or "odeme yoktur" in page_text.lower():
-            return "-", "-", "Ödeme Yoktur", "-", False
-
         def get_by_id(element_id):
             el = page.query_selector(f"#{element_id}")
             if el:
@@ -52,16 +44,27 @@ def extract_tev_result(page):
         tev_value     = get_by_id("Lab_ver_telafi")
         tahsilat_yeri = get_by_id("Lab_ver_tahsilat")
 
-        # TEV sayısallık kontrolü
+        # Lab_mesaj kontrolü: "bulunamadı" mesajı varsa → Ödeme Yoktur
+        mesaj_el = page.query_selector("#Lab_mesaj")
+        if mesaj_el:
+            mesaj = mesaj_el.inner_text().strip().lower()
+            if "bulunamadı" in mesaj or "bulunamadi" in mesaj:
+                return gonderen, vergino, "Ödeme Yoktur", tahsilat_yeri, False
+
+        # TEV değeri kontrolü: sıfırdan farklı sayı ise Ödeme Var
         has_payment = None
         if tev_value and tev_value != "-":
-            if re.match(r"^[\d.,\s]+$", tev_value):
-                has_payment = True
-            else:
+            normalized = tev_value.replace(".", "").replace(",", ".")
+            try:
+                amount = float(normalized)
+                has_payment = True if amount != 0 else False
+            except ValueError:
                 nums = re.findall(r"\d[\d.,]*", tev_value)
                 if nums:
-                    tev_value = nums[0]
                     has_payment = True
+        else:
+            has_payment = False
+            tev_value = "Ödeme Yoktur"
 
         return gonderen, vergino, tev_value, tahsilat_yeri, has_payment
 
@@ -85,6 +88,12 @@ def wait_for_result(page, previous_tescil=None):
                 "telafi edici vergi", "ödeme yoktur", "odeme yoktur",
                 "kayıt bulunamadı", "kayit bulunamadi"
             ]):
+                return
+        except Exception:
+            pass
+        # Lab_mesaj elementi yüklendiyse de çık
+        try:
+            if page.query_selector("#Lab_mesaj"):
                 return
         except Exception:
             pass
@@ -256,10 +265,31 @@ if st.session_state.query_results:
     styled_df = df.style.apply(highlight_row, axis=1)
     st.dataframe(styled_df, use_container_width=True, hide_index=True)
 
-    # Sadece TEV değerleri — Excel'e yapıştırılabilir
-    st.markdown("**Telafi Edici Vergi Değerleri (Excel'e yapıştırılabilir):**")
-    tev_lines = [r["Telafi Edici Vergi"] for r in display_rows]
-    st.code("\n".join(tev_lines), language=None)
+    # --- SONUCU KOPYALA BUTONU ---
+    # Tüm satırlar dahil (Ödeme Yoktur olanlar da)
+    tev_lines = [r["Telafi Edici Vergi"] for r in st.session_state.query_results]
+    tev_text = "\n".join(tev_lines)
+
+    kopyala_html = f"""
+    <textarea id="tev_data" style="position:absolute;left:-9999px;">{tev_text}</textarea>
+    <button onclick="
+        var el = document.getElementById('tev_data');
+        el.select();
+        document.execCommand('copy');
+        this.innerText = '✅ Kopyalandı!';
+        setTimeout(() => this.innerText = '📋 Sonucu Kopyala', 2000);
+    " style="
+        background-color: #1f77b4;
+        color: white;
+        border: none;
+        padding: 10px 24px;
+        font-size: 15px;
+        border-radius: 6px;
+        cursor: pointer;
+        margin-top: 10px;
+    ">📋 Sonucu Kopyala</button>
+    """
+    st.components.v1.html(kopyala_html, height=60)
 
 
 # --- İNDİRME SEÇENEKLERİ ---
