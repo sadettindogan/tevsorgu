@@ -44,12 +44,12 @@ def extract_tev_result(page):
         tev_value     = get_by_id("Lab_ver_telafi")
         tahsilat_yeri = get_by_id("Lab_ver_tahsilat")
 
-        # Lab_mesaj kontrolü: "bulunamadı" mesajı varsa → Ödeme Yoktur
+        # Lab_mesaj kontrolü: "bulunamadı" mesajı varsa → ödeme yok, TEV boş
         mesaj_el = page.query_selector("#Lab_mesaj")
         if mesaj_el:
             mesaj = mesaj_el.inner_text().strip().lower()
             if "bulunamadı" in mesaj or "bulunamadi" in mesaj:
-                return gonderen, vergino, "Ödeme Yoktur", tahsilat_yeri, False
+                return gonderen, vergino, "", tahsilat_yeri, False
 
         # TEV değeri kontrolü: sıfırdan farklı sayı ise Ödeme Var
         has_payment = None
@@ -63,8 +63,9 @@ def extract_tev_result(page):
                 if nums:
                     has_payment = True
         else:
+            # TEV değeri yok → boş bırak
             has_payment = False
-            tev_value = "Ödeme Yoktur"
+            tev_value = ""
 
         return gonderen, vergino, tev_value, tahsilat_yeri, has_payment
 
@@ -91,7 +92,6 @@ def wait_for_result(page, previous_tescil=None):
                 return
         except Exception:
             pass
-        # Lab_mesaj elementi yüklendiyse de çık
         try:
             if page.query_selector("#Lab_mesaj"):
                 return
@@ -163,7 +163,8 @@ if start_query:
                             "odeme_var": has_payment
                         })
 
-                        if pdf_mode and tev_value != "Kayıt Bulunamadı":
+                        # PDF yalnızca ödeme varsa indir
+                        if pdf_mode and has_payment is True:
                             page.emulate_media(media="print")
                             pdf_content = page.pdf(format="A4")
                             pdf_results[f"{tescil_no}.pdf"] = pdf_content
@@ -228,12 +229,10 @@ if st.session_state.query_results:
     display_rows = []
     for r in st.session_state.query_results:
         tev = r["Telafi Edici Vergi"]
-        if tev == "Kayıt Bulunamadı":
-            durum = "⚪ Kayıt Bulunamadı"
-        elif tev == "Ödeme Yoktur":
-            durum = "✅ Ödeme Yoktur"
-        elif r["odeme_var"] is True:
+        if r["odeme_var"] is True:
             durum = "🔴 Ödeme Var"
+        elif r["odeme_var"] is False:
+            durum = "✅ Ödeme Yoktur"
         elif tev == "Hata":
             durum = "❌ Hata"
         else:
@@ -251,14 +250,11 @@ if st.session_state.query_results:
     df = pd.DataFrame(display_rows)
 
     def highlight_row(row):
-        tev = row["Telafi Edici Vergi"]
-        if tev == "Kayıt Bulunamadı":
-            return ["background-color: #f0f0f0; color: #888"] * len(row)
-        elif tev == "Ödeme Yoktur":
+        if row["Durum"].startswith("✅"):
             return ["background-color: #e6f4ea; color: #2e7d32"] * len(row)
         elif row["Durum"].startswith("🔴"):
             return ["background-color: #fdecea; color: #c62828"] * len(row)
-        elif tev == "Hata":
+        elif row["Durum"].startswith("❌"):
             return ["background-color: #fff8e1; color: #f57f17"] * len(row)
         return [""] * len(row)
 
@@ -266,7 +262,7 @@ if st.session_state.query_results:
     st.dataframe(styled_df, use_container_width=True, hide_index=True)
 
     # --- SONUCU KOPYALA BUTONU ---
-    # Tüm satırlar dahil (Ödeme Yoktur olanlar da)
+    # TEV boşsa boş satır, doluysa değer — sıra korunur
     tev_lines = [r["Telafi Edici Vergi"] for r in st.session_state.query_results]
     tev_text = "\n".join(tev_lines)
 
