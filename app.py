@@ -224,7 +224,7 @@ if start_query:
 # --- SORGU SONUÇLARI TABLO ---
 if st.session_state.query_results:
     st.markdown("---")
-    st.markdown("### 📊 Sorgu Sonuçları")
+    st.markdown("### 📊 Sonuç")
 
     display_rows = []
     for r in st.session_state.query_results:
@@ -245,9 +245,8 @@ if st.session_state.query_results:
             "Telafi Edici Vergi": tev,
             "Tahsilat Yeri": r["Tahsilat Yeri"],
             "Durum": durum,
+            "odeme_var": r["odeme_var"],
         })
-
-    df = pd.DataFrame(display_rows)
 
     def highlight_row(row):
         if row["Durum"].startswith("✅"):
@@ -258,11 +257,26 @@ if st.session_state.query_results:
             return ["background-color: #fff8e1; color: #f57f17"] * len(row)
         return [""] * len(row)
 
-    styled_df = df.style.apply(highlight_row, axis=1)
-    st.dataframe(styled_df, use_container_width=True, hide_index=True)
+    # --- KISA TABLO: sadece İhracat Beyannamesi + Telafi Edici Vergi ---
+    kisa_df = pd.DataFrame([{
+        "İhracat Beyannamesi": r["İhracat Beyannamesi"],
+        "Telafi Edici Vergi": r["Telafi Edici Vergi"],
+        "Durum": r["Durum"],
+    } for r in display_rows])
+
+    def highlight_kisa(row):
+        if row["Durum"].startswith("✅"):
+            return ["background-color: #e6f4ea; color: #2e7d32"] * len(row)
+        elif row["Durum"].startswith("🔴"):
+            return ["background-color: #fdecea; color: #c62828"] * len(row)
+        elif row["Durum"].startswith("❌"):
+            return ["background-color: #fff8e1; color: #f57f17"] * len(row)
+        return [""] * len(row)
+
+    styled_kisa = kisa_df.style.apply(highlight_kisa, axis=1)
+    st.dataframe(styled_kisa, use_container_width=True, hide_index=True)
 
     # --- SONUCU KOPYALA BUTONU ---
-    # İhracat Beyannamesi + TEV — tab ile ayrılır, Excel'e yapıştırılabilir
     copy_lines = [
         f"{r['İhracat Beyannamesi']}\t{r['Telafi Edici Vergi']}"
         for r in st.session_state.query_results
@@ -290,6 +304,49 @@ if st.session_state.query_results:
     """
     st.components.v1.html(kopyala_html, height=60)
 
+    # --- DETAYLI SONUÇ ---
+    if st.button("📋 Detaylı Sonuç", use_container_width=True):
+        st.session_state["detay_acik"] = not st.session_state.get("detay_acik", False)
+
+    if st.session_state.get("detay_acik", False):
+        tam_df = pd.DataFrame([{
+            "İhracat Beyannamesi": r["İhracat Beyannamesi"],
+            "Gönderen": r["Gönderen"],
+            "Vergino": r["Vergino"],
+            "Telafi Edici Vergi": r["Telafi Edici Vergi"],
+            "Tahsilat Yeri": r["Tahsilat Yeri"],
+            "Durum": r["Durum"],
+        } for r in display_rows])
+        styled_tam = tam_df.style.apply(highlight_row, axis=1)
+        st.dataframe(styled_tam, use_container_width=True, hide_index=True)
+
+        # Detay Sonuç Kopyala butonu
+        detay_lines = [
+            f"{r['İhracat Beyannamesi']}\t{r['Gönderen']}\t{r['Vergino']}\t{r['Telafi Edici Vergi']}\t{r['Tahsilat Yeri']}"
+            for r in st.session_state.query_results
+        ]
+        detay_text = "\n".join(detay_lines)
+
+        detay_kopyala_html = f"""
+        <textarea id="detay_data" style="position:absolute;left:-9999px;">{detay_text}</textarea>
+        <button onclick="
+            var el = document.getElementById('detay_data');
+            el.select();
+            document.execCommand('copy');
+            this.innerText = '✅ Kopyalandı!';
+            setTimeout(() => this.innerText = '📋 Detay Sonuç Kopyala', 2000);
+        " style="
+            background-color: #555;
+            color: white;
+            border: none;
+            padding: 10px 24px;
+            font-size: 15px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin-top: 10px;
+        ">📋 Detay Sonuç Kopyala</button>
+        """
+        st.components.v1.html(detay_kopyala_html, height=60)
 
 # --- İNDİRME SEÇENEKLERİ ---
 if st.session_state.zip_bytes or st.session_state.merged_pdf_bytes:
