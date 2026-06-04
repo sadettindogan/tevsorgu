@@ -1,9 +1,9 @@
 name: Streamlit Keep Alive
 
 on:
-  schedule:
-    # Her gün gece 03:00'te otomatik çalışır
-    - cron: '0 3 * * *'
+schedule:
+    # Her 6 saatte bir otomatik çalışır (Gece 00:00, 06:00, 12:00, 18:00)
+    - cron: '0 */6 * * *'
   workflow_dispatch: # İstediğimiz zaman elle de çalıştırabilmek için
 
 jobs:
