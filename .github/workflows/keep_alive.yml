@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Ping Streamlit App
-      run: curl -I https://GUNCEL_SİTE_ADRESİN.streamlit.app
+      run: curl -I https://tevsorgu.streamlit.app
 
     - name: Checkout Repository
       uses: actions/checkout@v3
