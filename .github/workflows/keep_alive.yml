@@ -1,17 +1,17 @@
 name: Streamlit Keep Alive
 
 on:
-schedule:
-    # Her 6 saatte bir otomatik çalışır (Gece 00:00, 06:00, 12:00, 18:00)
+  schedule:
     - cron: '0 */6 * * *'
-  workflow_dispatch: # İstediğimiz zaman elle de çalıştırabilmek için
+  workflow_dispatch:
 
 jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
     - name: Ping Streamlit App
-      run: curl -I https://tevsorgu.streamlit.app/
+      run: curl -I https://GUNCEL_SİTE_ADRESİN.streamlit.app
+
     - name: Checkout Repository
       uses: actions/checkout@v3
 
