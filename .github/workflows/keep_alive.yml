@@ -8,18 +8,22 @@ on:
 jobs:
   ping:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-    - name: Ping Streamlit App
-      run: curl -I https://tevsorgu.streamlit.app
+      - name: Ping Streamlit App
+        run: |
+          # || true ekleyerek curl hata verse bile workflow'un patlamasını önlüyoruz
+          curl -s -L --max-redirs 5 "https://tarica.streamlit.app" || true
 
-    - name: Checkout Repository
-      uses: actions/checkout@v3
+      - name: Checkout Repository
+        uses: actions/checkout@v3
 
-    - name: Keep GitHub Repo Active
-      run: |
-        date > keep_alive.txt
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        git add keep_alive.txt
-        git commit -m "Keep-alive update: $(date)"
-        git push
+      - name: Keep GitHub Repo Active
+        run: |
+          date > keep_alive.txt
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add keep_alive.txt
+          git commit -m "Keep-alive update: $(date)" || exit 0
+          git push
